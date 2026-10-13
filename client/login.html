@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Sign in · Techman</title>
+<link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+<div class="login-wrap">
+  <form class="login" id="loginForm" autocomplete="on">
+    <div>
+      <div class="label">IAFIS study portal</div>
+      <h1>Sign in</h1>
+    </div>
+    <label class="field" for="password">Password
+      <input type="password" id="password" name="password" autocomplete="current-password" required>
+    </label>
+    <label class="field" for="code">Authenticator code
+      <input type="text" id="code" name="code" class="code-input" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required>
+    </label>
+    <button class="btn primary" type="submit" id="submit">Sign in</button>
+    <p class="error" id="err" role="alert" hidden></p>
+  </form>
+</div>
+<script src="/assets/login.js"></script>
+</body>
+</html>
