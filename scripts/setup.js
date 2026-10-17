@@ -22,7 +22,7 @@ if (pw1 !== pw2) { console.error('The passwords do not match.'); process.exit(1)
 
 const totpSecret = base32Encode(crypto.randomBytes(20));
 const masterKey = crypto.randomBytes(32).toString('base64');
-const label = encodeURIComponent('Techman:IAFIS study portal');
+const label = encodeURIComponent('Techman:Study portal');
 const otpauth = `otpauth://totp/${label}?secret=${totpSecret}&issuer=Techman&algorithm=SHA1&digits=6&period=30`;
 
 console.log(`

@@ -1,6 +1,6 @@
-# Techman: IAFIS study portal
+# Techman: study portal
 
-Private, single-user study portal for the IAFIS GLPI manuals and IAFIS TECH escalation
+Private, single-user study portal for GLPI manuals and incident escalation
 procedures. Node 22 + Express + Postgres on Railway, behind Cloudflare Access.
 
 ## 1. Security model

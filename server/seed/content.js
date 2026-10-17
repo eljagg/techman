@@ -1,13 +1,13 @@
 // Seed study content written from the English translations of:
 //   T = GLPI User Manual – Technical Support (OPS-I&S-MAN-001 V00.05)
 //   C = GLPI User Manual – Clients (OPS-SOP-MAN-002 V00.04)
-//   E = IAFIS TECH Incident Management and Case Escalation Procedures (v1.0)
+//   E = Incident Management and Case Escalation Procedures (v1.0)
 // Seeded rows are upserted by key on every start; edit wording here and redeploy.
 
 export const DOC_NAMES = {
   T: 'Technical support manual',
   C: 'Client manual',
-  E: 'IAFIS TECH escalation',
+  E: 'Escalation procedures',
 };
 
 export const PLAN = [
@@ -32,10 +32,10 @@ export const PLAN = [
   { idx: 7, doc: 'Technical manual', secs: '§8–12, Annexes', title: 'Tools, contracts and reference annexes',
     items: ['Projects tool: fields, tasks, Kanban', 'Knowledge base: search, create, maintain (target user Jaime Vuelvas)', 'Contacts, documents, contracts', 'Annexes: contractual conditions, definitions, statuses, request sources, priority matrix'],
     goal: 'Write a knowledge article and know which annex answers which question.' },
-  { idx: 8, doc: 'IAFIS TECH procedures', secs: '§4–10', title: 'The five-level support structure',
+  { idx: 8, doc: 'Escalation procedures', secs: '§4–10', title: 'The five-level support structure',
     items: ['Glossary', 'Support policy principles 8.1–8.5', 'Level 1, 2, 2.5, Technical Authority, Level 3 responsibilities', 'Requirements to open a case', 'Requirements to escalate, and Technical Authority review'],
     goal: 'Draw the escalation chain and state what each level owns.' },
-  { idx: 9, doc: 'IAFIS TECH procedures', secs: '§11–16', title: 'Minimum information and the rules of contact',
+  { idx: 9, doc: 'Escalation procedures', secs: '§11–16', title: 'Minimum information and the rules of contact',
     items: ['Error categories and the minimum-information table', 'The Jamaica JCF firewall incident report as a model', 'VPN request form and approval', 'Communication restrictions: end client, France, Technical Authority', 'Complaint escalation via the Local Coordinator (SDM)'],
     goal: 'Write an incident report in the JCF example format.' },
   { idx: 10, doc: 'All three', secs: 'Review', title: 'Put it together',
