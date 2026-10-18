@@ -98,7 +98,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && e.target.matches && e.target.matches('abbr.gl')) showPop(e.target);
   if (e.key === 'Escape') pop.hidden = true;
 });
-window.addEventListener('hashchange', () => { pop.hidden = true; });
+window.addEventListener('hashchange', () => { pop.hidden = true; if (LB && LB.dlg.open) LB.dlg.close(); });
 
 // ---------- figures (images from the documents) ----------
 const srcName = (k) => META.sources[k] || k;
@@ -127,7 +127,8 @@ function figTile(list, i) {
   const f = list[i];
   return h('button', { class: 'fig', type: 'button', onclick: () => openLightbox(list, i), title: figCaption(f) },
     h('img', { src: figUrl(f), alt: figCaption(f), loading: 'lazy', decoding: 'async', width: 240, height: f.w ? Math.round(240 * f.h / f.w) : 160 }),
-    h('span', { class: 'figcap' }, figCaption(f)));
+    h('span', { class: 'figcap' }, figCaption(f)),
+    f.what ? h('span', { class: 'figwhat muted' }, f.what) : null);
 }
 function figStrip(list, { max = 6, title = null, more = null } = {}) {
   if (!list.length) return null;
@@ -139,44 +140,108 @@ function figStrip(list, { max = 6, title = null, more = null } = {}) {
     more);
 }
 
+// Full-screen picture viewer: zoom (wheel, buttons, double-click, pinch), drag to pan,
+// prev/next, a filmstrip of the current list and the explanation beside the picture.
 let LB = null;
-function openLightbox(list, start) {
-  if (!LB) {
-    const img = h('img', { alt: '' });
-    const cap = h('div', { class: 'lbcap' });
-    const count = h('span', { class: 'pill' });
-    const full = h('a', { class: 'btn', target: '_blank', rel: 'noopener' }, 'Open full size');
-    const prev = h('button', { class: 'btn', type: 'button', 'aria-label': 'Previous image' }, '‹ Prev');
-    const next = h('button', { class: 'btn', type: 'button', 'aria-label': 'Next image' }, 'Next ›');
-    const close = h('button', { class: 'btn', type: 'button', 'aria-label': 'Close' }, 'Close ✕');
-    const dlg = h('dialog', { class: 'lb', 'aria-label': 'Image viewer' },
-      h('div', { class: 'lbbar' }, count, h('div', { class: 'row' }, prev, next, full, close)),
-      h('div', { class: 'lbimg' }, img), cap);
-    document.body.append(dlg);
-    LB = { dlg, img, cap, count, full, list: [], i: 0 };
-    const show = (i) => {
-      LB.i = (i + LB.list.length) % LB.list.length;
-      const f = LB.list[LB.i];
-      img.src = figUrl(f, 'full'); img.alt = figCaption(f);
-      full.href = figUrl(f, 'full');
-      count.textContent = `${LB.i + 1} / ${LB.list.length}`;
-      cap.replaceChildren(...[h('h3', {}, ...txt(figCaption(f))),
-        h('div', { class: 'row' }, h('span', { class: 'pill' }, srcName(f.doc)), f.page ? h('span', { class: 'pill' }, `page ${f.page}`) : null),
-        f.note ? h('p', { class: 'muted' }, ...txt(f.note)) : null].filter(Boolean));
-    };
-    LB.show = show;
-    prev.addEventListener('click', () => show(LB.i - 1));
-    next.addEventListener('click', () => show(LB.i + 1));
-    close.addEventListener('click', () => dlg.close());
-    dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close(); });
-    dlg.addEventListener('keydown', (e) => {
-      if (e.key === 'ArrowLeft') show(LB.i - 1);
-      if (e.key === 'ArrowRight') show(LB.i + 1);
-    });
+function buildViewer() {
+  const img = h('img', { alt: '', draggable: 'false' });
+  const stage = h('div', { class: 'vstage' }, img);
+  const info = h('aside', { class: 'vinfo' });
+  const strip = h('div', { class: 'vstrip' });
+  const count = h('span', { class: 'pill' });
+  const ttl = h('div', { class: 'vtitle' });
+  const zoomLbl = h('span', { class: 'mono vzoom' }, '100%');
+  const btn = (label, title, fn, cls = 'btn') => h('button', { class: cls, type: 'button', title, 'aria-label': title, onclick: fn }, label);
+  const dlg = h('dialog', { class: 'viewer', 'aria-label': 'Picture viewer' },
+    h('div', { class: 'vbar' },
+      btn('‹ Back to list', 'Close the viewer (Esc)', () => dlg.close(), 'btn vback'),
+      count, ttl,
+      h('div', { class: 'vtools' },
+        btn('◀', 'Previous picture (←)', () => show(LB.i - 1)),
+        btn('▶', 'Next picture (→)', () => show(LB.i + 1)),
+        h('span', { class: 'vsep' }),
+        btn('−', 'Zoom out (-)', () => zoomBy(1 / 1.4)), zoomLbl, btn('+', 'Zoom in (+)', () => zoomBy(1.4)),
+        btn('Fit', 'Fit to screen (0)', () => fit()), btn('1:1', 'Actual pixels (1)', () => setScale(1, true)),
+        h('span', { class: 'vsep' }),
+        btn('ⓘ', 'Show or hide the explanation (i)', () => dlg.classList.toggle('noinfo')),
+        btn('⛶', 'Full screen (f)', () => { if (document.fullscreenElement) document.exitFullscreen(); else dlg.requestFullscreen?.().catch(() => {}); }))),
+    h('div', { class: 'vbody' }, stage, info), strip);
+  document.body.append(dlg);
+  LB = { dlg, img, list: [], i: 0, s: 1, x: 0, y: 0, fitS: 1 };
+
+  const apply = () => { img.style.transform = `translate(${LB.x}px, ${LB.y}px) scale(${LB.s})`; zoomLbl.textContent = `${Math.round(LB.s * 100)}%`; stage.classList.toggle('zoomed', LB.s > LB.fitS * 1.01); };
+  function fit() {
+    const r = stage.getBoundingClientRect(), w = img.naturalWidth || 1, hh = img.naturalHeight || 1;
+    LB.fitS = Math.min(r.width / w, r.height / hh); LB.s = LB.fitS;
+    LB.x = (r.width - w * LB.s) / 2; LB.y = (r.height - hh * LB.s) / 2; apply();
   }
+  function setScale(ns, center, cx, cy) {
+    const r = stage.getBoundingClientRect();
+    ns = Math.min(Math.max(ns, LB.fitS * 0.5), 8);
+    const px = center || cx === undefined ? r.width / 2 : cx, py = center || cy === undefined ? r.height / 2 : cy;
+    LB.x = px - (px - LB.x) * (ns / LB.s); LB.y = py - (py - LB.y) * (ns / LB.s); LB.s = ns; apply();
+  }
+  const zoomBy = (f, cx, cy) => setScale(LB.s * f, cx === undefined, cx, cy);
+  LB.fit = fit;
+
+  stage.addEventListener('wheel', (e) => { e.preventDefault(); const r = stage.getBoundingClientRect(); zoomBy(e.deltaY < 0 ? 1.15 : 1 / 1.15, e.clientX - r.left, e.clientY - r.top); }, { passive: false });
+  stage.addEventListener('dblclick', (e) => { const r = stage.getBoundingClientRect(); if (LB.s > LB.fitS * 1.5) fit(); else setScale(LB.fitS * 2.5, false, e.clientX - r.left, e.clientY - r.top); });
+  const pts = new Map(); let last = null, pinch = null;
+  stage.addEventListener('pointerdown', (e) => { stage.setPointerCapture(e.pointerId); pts.set(e.pointerId, { x: e.clientX, y: e.clientY }); last = { x: e.clientX, y: e.clientY }; });
+  stage.addEventListener('pointermove', (e) => {
+    if (!pts.has(e.pointerId)) return;
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pts.size === 2) {
+      const [a, b] = [...pts.values()]; const d = Math.hypot(a.x - b.x, a.y - b.y); const r = stage.getBoundingClientRect();
+      if (pinch) zoomBy(d / pinch, (a.x + b.x) / 2 - r.left, (a.y + b.y) / 2 - r.top);
+      pinch = d; return;
+    }
+    if (last) { LB.x += e.clientX - last.x; LB.y += e.clientY - last.y; last = { x: e.clientX, y: e.clientY }; apply(); }
+  });
+  const up = (e) => { pts.delete(e.pointerId); pinch = null; last = pts.size ? [...pts.values()][0] : null; };
+  stage.addEventListener('pointerup', up); stage.addEventListener('pointercancel', up);
+  img.addEventListener('load', fit);
+  window.addEventListener('resize', () => { if (dlg.open) fit(); });
+  dlg.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowLeft') { e.preventDefault(); show(LB.i - 1); }
+    else if (e.key === 'ArrowRight') { e.preventDefault(); show(LB.i + 1); }
+    else if (e.key === '+' || e.key === '=') zoomBy(1.4);
+    else if (e.key === '-') zoomBy(1 / 1.4);
+    else if (e.key === '0') fit();
+    else if (e.key === '1') setScale(1, true);
+    else if (e.key === 'i') dlg.classList.toggle('noinfo');
+    else if (e.key === 'f') { if (document.fullscreenElement) document.exitFullscreen(); else dlg.requestFullscreen?.().catch(() => {}); }
+  });
+  dlg.addEventListener('close', () => { if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); });
+
+  function show(i) {
+    LB.i = (i + LB.list.length) % LB.list.length;
+    const f = LB.list[LB.i];
+    img.src = figUrl(f, 'full'); img.alt = figCaption(f);
+    count.textContent = `${LB.i + 1} / ${LB.list.length}`;
+    ttl.replaceChildren(...txt(figCaption(f)));
+    info.replaceChildren(...[
+      h('h2', {}, ...txt(figCaption(f))),
+      h('div', { class: 'row' }, h('span', { class: 'pill' }, srcName(f.doc)), f.page ? h('span', { class: 'pill' }, `page ${f.page}`) : null),
+      f.what ? h('section', {}, h('div', { class: 'ltag' }, 'What this shows'), h('p', {}, ...txt(f.what))) : null,
+      f.why ? h('section', { class: 'lwhy' }, h('div', { class: 'ltag' }, 'Why it matters'), h('p', {}, ...txt(f.why))) : null,
+      f.terms?.length ? h('section', {}, h('div', { class: 'ltag' }, 'Key terms'), h('ul', {}, f.terms.map((t) => h('li', {}, ...txt(t))))) : null,
+      f.note ? h('details', {}, h('summary', { class: 'muted' }, 'Text from the document'), h('p', { class: 'muted' }, ...txt(f.note))) : null,
+      h('p', { class: 'muted vhelp' }, 'Scroll or pinch to zoom · drag to move · double-click to zoom in · ← → for next · Esc to go back'),
+    ].filter(Boolean));
+    strip.querySelectorAll('button').forEach((b, k) => b.classList.toggle('on', k === LB.i));
+    strip.children[LB.i]?.scrollIntoView({ block: 'nearest', inline: 'center' });
+  }
+  LB.show = show;
+  LB.strip = strip;
+}
+function openLightbox(list, start) {
+  if (!LB) buildViewer();
   LB.list = list;
-  LB.show(start);
+  LB.strip.replaceChildren(...list.map((f, k) => h('button', { type: 'button', title: figCaption(f), onclick: () => LB.show(k) },
+    h('img', { src: figUrl(f), alt: '', loading: 'lazy' }))));
   if (!LB.dlg.open) LB.dlg.showModal();
+  LB.show(start);
 }
 
 // ---------- views ----------
@@ -399,7 +464,6 @@ VIEWS.lesson = async () => {
             h('img', { src: figUrl(main, 'full'), alt: figCaption(main) }), h('span', { class: 'zoom' }, '⤢ Enlarge')));
       if (present.length > 1) parts.push(h('div', { class: 'figs small' }, present.slice(1).map((_, j) => figTile(present, j + 1))));
     }
-    if (st.diagram) parts.push(drawDiagram(st.diagram));
     return parts;
   }
 
@@ -414,16 +478,21 @@ VIEWS.lesson = async () => {
       i < total - 1 ? h('button', { class: 'btn primary', type: 'button', onclick: () => go(i + 1) }, 'Next ›') : null);
     if (i < L.steps.length) {
       const st = L.steps[i];
-      const vis = visual(st);
+      const imgs = visual(st);
+      const diag = st.diagram ? drawDiagram(st.diagram) : null;
+      // Picture left and text right; a diagram goes full width underneath, or takes the
+      // picture's place when the step has no screenshot.
+      const left = imgs.length ? imgs : (diag ? [diag] : []);
       stage.replaceChildren(
-        h('div', { class: 'lesson' + (vis.length ? '' : ' novis') },
-          vis.length ? h('div', { class: 'lvis' }, ...vis) : null,
+        h('div', { class: 'lesson' + (left.length ? '' : ' novis') },
+          left.length ? h('div', { class: 'lvis' }, ...left) : null,
           h('div', { class: 'ltext' },
             h('div', { class: 'label' }, `Step ${i + 1}`),
             h('h2', {}, ...txt(st.title)),
             st.do?.length ? h('div', { class: 'ldo' }, h('div', { class: 'ltag' }, 'Do this'), h('ol', {}, st.do.map((x) => h('li', {}, ...txt(x))))) : null,
             st.look ? h('div', { class: 'llook' }, h('div', { class: 'ltag' }, 'Look for this in the picture'), h('p', {}, ...txt(st.look))) : null,
-            st.why ? h('div', { class: 'lwhy' }, h('div', { class: 'ltag' }, 'Why it matters'), h('p', {}, ...txt(st.why))) : null)),
+            st.why ? h('div', { class: 'lwhy' }, h('div', { class: 'ltag' }, 'Why it matters'), h('p', {}, ...txt(st.why))) : null),
+          imgs.length && diag ? h('div', { class: 'lwide' }, diag) : null),
         nav);
     } else {
       const checks = L.check.map((c, k) => {
@@ -456,12 +525,15 @@ VIEWS.lesson = async () => {
   document.addEventListener('keydown', lessonKeys);
   draw();
   return [
-    h('div', {}, h('a', { href: '#/plan', class: 'muted' }, '‹ All lessons'),
-      h('div', { class: 'label', style: 'margin-top:8px' }, `Lesson ${n} of ${rows.length} · ${sess.doc} ${sess.secs}`),
-      h('h1', {}, sess.title)),
-    h('p', {}, ...txt(L.intro)),
-    bar, dots, stage,
-    h('p', { class: 'muted' }, 'Tip: use the ← and → keys to move between steps.'),
+    h('div', { class: 'lhead' },
+      h('div', { style: 'min-width:0' }, h('a', { href: '#/plan', class: 'muted' }, '‹ All lessons'),
+        h('div', { class: 'label' }, `Lesson ${n} of ${rows.length} · ${sess.doc} ${sess.secs}`),
+        h('h1', {}, sess.title)),
+      dots),
+    bar,
+    h('details', { class: 'lintro' }, h('summary', { class: 'muted' }, 'About this lesson'), h('p', {}, ...txt(L.intro))),
+    stage,
+    h('p', { class: 'muted' }, 'Tip: ← and → move between steps. Click a picture to open it full screen with zoom.'),
   ];
 };
 
@@ -698,7 +770,7 @@ VIEWS.visuals = async () => {
     }
     area.replaceChildren(...(groups.length ? groups.map((g) => h('section', { class: 'box' },
       h('h2', {}, srcName(g.doc), ' ', h('span', { class: 'pill' }, g.idx.length)),
-      h('div', { class: 'figs' }, g.idx.map((i) => figTile(current, i)))))
+      h('div', { class: 'figs vis' }, g.idx.map((i) => figTile(current, i)))))
       : [h('p', { class: 'muted' }, FIGS.length ? 'No pictures in this document match.' : 'No pictures loaded yet. Upload the visuals packs above.')]));
   };
   sel.addEventListener('change', () => { remember('visDoc', sel.value); draw(); });
@@ -822,6 +894,7 @@ async function render() {
   const fn = VIEWS[name] || VIEWS.dashboard;
   document.querySelectorAll('#tabs a').forEach((a) => {
     const tab = name === 'lesson' ? 'plan' : name;
+    view.classList.toggle('wide', ['lesson', 'visuals', 'plan'].includes(name));
     if (a.getAttribute('href') === `#/${tab}`) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   });
   try {

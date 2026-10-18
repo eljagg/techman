@@ -13,6 +13,7 @@ import { q, pool, audit } from '../db.js';
 import { config } from '../config.js';
 import { encryptFigure, decryptFigure } from '../crypto.js';
 import { SOURCES } from '../seed/sources.js';
+import { EXPLAIN } from '../seed/explanations.js';
 
 export const figures = express.Router();
 
@@ -26,6 +27,8 @@ const upload = multer({
 
 const str = (v, max) => String(v ?? '').replace(/[\u0000-\u001f]/g, ' ').trim().slice(0, max);
 const isJpeg = (b) => b.length > 4 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff;
+const isWebp = (b) => b.length > 12 && b.toString('latin1', 0, 4) === 'RIFF' && b.toString('latin1', 8, 12) === 'WEBP';
+const mimeOf = (b) => (isWebp(b) ? 'image/webp' : 'image/jpeg');
 
 function parsePack(buf) {
   if (buf.length < 10 || !buf.subarray(0, MAGIC.length).equals(MAGIC)) throw new Error('This is not a Techman visuals pack (.tvpack).');
@@ -44,7 +47,7 @@ function parsePack(buf) {
       throw new Error('The pack index is damaged.');
     }
     const b = data.subarray(off, off + len);
-    if (!isJpeg(b)) throw new Error('The pack contains something that is not a JPEG image.');
+    if (!isJpeg(b) && !isWebp(b)) throw new Error('The pack contains something that is not a JPEG or WebP image.');
     return b;
   };
   return {
@@ -70,7 +73,7 @@ figures.get('/', async (req, res, next) => {
   try {
     const { rows } = await q(
       `SELECT fkey AS key, doc, page, sec, title, note, ord, w, h FROM figures ORDER BY ord, fkey`);
-    res.json(rows);
+    res.json(rows.map((r) => (EXPLAIN[r.key] ? { ...r, ...EXPLAIN[r.key] } : r)));
   } catch (e) { next(e); }
 });
 
@@ -88,7 +91,7 @@ figures.get('/:key/:variant', async (req, res, next) => {
       return res.status(500).type('text').send('This image could not be decrypted.');
     }
     res.set({
-      'Content-Type': 'image/jpeg',
+      'Content-Type': mimeOf(img),
       // Kept briefly in this browser's private cache so paging through images is quick.
       'Cache-Control': 'private, max-age=900',
       'X-Content-Type-Options': 'nosniff',
