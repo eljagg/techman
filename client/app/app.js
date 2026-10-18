@@ -2,7 +2,9 @@
 // so nothing stored in the database can run as script.
 
 const view = document.getElementById('view');
-let META = { docs: {}, timeZone: 'America/Jamaica' };
+let META = { docs: {}, sources: {}, sourceGroups: [], timeZone: 'America/Jamaica' };
+let GLOSSARY = [];
+let FIGS = [];
 
 // ---------- helpers ----------
 function h(tag, attrs, ...kids) {
@@ -51,11 +53,139 @@ function recall(key, fallback) { try { return localStorage.getItem('techman:' + 
 
 function errorBox(e) { return h('p', { class: 'error', role: 'alert' }, e.message || String(e)); }
 
+// ---------- glossary tooltips ----------
+// Every abbreviation found in the glossary is underlined; hover (or tap) shows its meaning.
+let ABBR_RE = null;
+const ABBR_MAP = new Map();
+function buildAbbr() {
+  ABBR_MAP.clear();
+  for (const g of GLOSSARY) if (g.abbr && g.abbr.length >= 2) ABBR_MAP.set(g.abbr, g);
+  const keys = [...ABBR_MAP.keys()].sort((a, b) => b.length - a.length)
+    .map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  ABBR_RE = keys.length ? new RegExp(`(?<![A-Za-z0-9])(${keys.join('|')})(?![A-Za-z0-9])`, 'g') : null;
+}
+const glossTitle = (g) => `${g.term ? g.term + ' — ' : ''}${g.meaning}`;
+function txt(s) {
+  s = String(s ?? '');
+  if (!ABBR_RE) return [s];
+  const out = []; let last = 0;
+  for (const m of s.matchAll(ABBR_RE)) {
+    if (m.index > last) out.push(s.slice(last, m.index));
+    const g = ABBR_MAP.get(m[1]);
+    out.push(h('abbr', { class: 'gl', title: glossTitle(g), tabindex: 0, 'data-abbr': m[1] }, m[1]));
+    last = m.index + m[1].length;
+  }
+  if (last < s.length) out.push(s.slice(last));
+  return out;
+}
+const pop = h('div', { class: 'gpop', role: 'tooltip', hidden: true });
+document.body.append(pop);
+function showPop(el) {
+  const g = ABBR_MAP.get(el.dataset.abbr); if (!g) return;
+  pop.replaceChildren(...[h('strong', {}, g.abbr), g.term ? h('div', { class: 'gterm' }, g.term) : null, h('div', {}, g.meaning),
+    h('a', { href: `#/glossary?q=${encodeURIComponent(g.abbr)}` }, 'Open in glossary')].filter(Boolean));
+  pop.hidden = false;
+  const r = el.getBoundingClientRect();
+  const left = Math.max(8, Math.min(window.scrollX + r.left, window.scrollX + document.documentElement.clientWidth - pop.offsetWidth - 8));
+  pop.style.left = `${left}px`; pop.style.top = `${window.scrollY + r.bottom + 6}px`;
+}
+document.addEventListener('click', (e) => {
+  const a = e.target.closest && e.target.closest('abbr.gl');
+  if (a) { e.preventDefault(); showPop(a); return; }
+  if (!e.target.closest || !e.target.closest('.gpop')) pop.hidden = true;
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && e.target.matches && e.target.matches('abbr.gl')) showPop(e.target);
+  if (e.key === 'Escape') pop.hidden = true;
+});
+window.addEventListener('hashchange', () => { pop.hidden = true; });
+
+// ---------- figures (images from the documents) ----------
+const srcName = (k) => META.sources[k] || k;
+const figUrl = (f, v = 'thumb') => `/api/figures/${encodeURIComponent(f.key)}/${v}`;
+const secMatch = (sec, p) => sec === p || sec.startsWith(p + '.');
+
+function figsFor(selectors) {
+  const out = [], seen = new Set();
+  for (const s of selectors || []) {
+    const [a, b] = s.split(':');
+    const hits = a === 'key' ? FIGS.filter((f) => f.key === b) : FIGS.filter((f) => f.doc === a && secMatch(f.sec, b));
+    for (const f of hits) if (!seen.has(f.key)) { seen.add(f.key); out.push(f); }
+  }
+  return out;
+}
+function figsForCard(c) {
+  const m = /§\s*(\d+(?:\.\d+)*)/.exec(c.section || '');
+  if (!m) return [];
+  let s = m[1], hits = FIGS.filter((f) => f.doc === c.doc && secMatch(f.sec, s));
+  if (!hits.length && s.includes('.')) { s = s.replace(/\.\d+$/, ''); hits = FIGS.filter((f) => f.doc === c.doc && secMatch(f.sec, s)); }
+  return hits;
+}
+function figCaption(f) { return f.title || `${srcName(f.doc)} p.${f.page}`; }
+
+function figTile(list, i) {
+  const f = list[i];
+  return h('button', { class: 'fig', type: 'button', onclick: () => openLightbox(list, i), title: figCaption(f) },
+    h('img', { src: figUrl(f), alt: figCaption(f), loading: 'lazy', decoding: 'async', width: 240, height: f.w ? Math.round(240 * f.h / f.w) : 160 }),
+    h('span', { class: 'figcap' }, figCaption(f)));
+}
+function figStrip(list, { max = 6, title = null, more = null } = {}) {
+  if (!list.length) return null;
+  const shown = list.slice(0, max);
+  return h('div', { class: 'figwrap' },
+    title ? h('div', { class: 'label' }, title) : null,
+    h('div', { class: 'figs' }, shown.map((_, i) => figTile(list, i)),
+      list.length > max ? h('button', { class: 'fig more', type: 'button', onclick: () => openLightbox(list, max) }, `+${list.length - max} more`) : null),
+    more);
+}
+
+let LB = null;
+function openLightbox(list, start) {
+  if (!LB) {
+    const img = h('img', { alt: '' });
+    const cap = h('div', { class: 'lbcap' });
+    const count = h('span', { class: 'pill' });
+    const full = h('a', { class: 'btn', target: '_blank', rel: 'noopener' }, 'Open full size');
+    const prev = h('button', { class: 'btn', type: 'button', 'aria-label': 'Previous image' }, '‹ Prev');
+    const next = h('button', { class: 'btn', type: 'button', 'aria-label': 'Next image' }, 'Next ›');
+    const close = h('button', { class: 'btn', type: 'button', 'aria-label': 'Close' }, 'Close ✕');
+    const dlg = h('dialog', { class: 'lb', 'aria-label': 'Image viewer' },
+      h('div', { class: 'lbbar' }, count, h('div', { class: 'row' }, prev, next, full, close)),
+      h('div', { class: 'lbimg' }, img), cap);
+    document.body.append(dlg);
+    LB = { dlg, img, cap, count, full, list: [], i: 0 };
+    const show = (i) => {
+      LB.i = (i + LB.list.length) % LB.list.length;
+      const f = LB.list[LB.i];
+      img.src = figUrl(f, 'full'); img.alt = figCaption(f);
+      full.href = figUrl(f, 'full');
+      count.textContent = `${LB.i + 1} / ${LB.list.length}`;
+      cap.replaceChildren(...[h('h3', {}, ...txt(figCaption(f))),
+        h('div', { class: 'row' }, h('span', { class: 'pill' }, srcName(f.doc)), f.page ? h('span', { class: 'pill' }, `page ${f.page}`) : null),
+        f.note ? h('p', { class: 'muted' }, ...txt(f.note)) : null].filter(Boolean));
+    };
+    LB.show = show;
+    prev.addEventListener('click', () => show(LB.i - 1));
+    next.addEventListener('click', () => show(LB.i + 1));
+    close.addEventListener('click', () => dlg.close());
+    dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close(); });
+    dlg.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowLeft') show(LB.i - 1);
+      if (e.key === 'ArrowRight') show(LB.i + 1);
+    });
+  }
+  LB.list = list;
+  LB.show(start);
+  if (!LB.dlg.open) LB.dlg.showModal();
+}
+
 // ---------- views ----------
 const VIEWS = {};
 
 VIEWS.dashboard = async () => {
-  const [d, stats] = await Promise.all([api('/api/dashboard'), api('/api/stats')]);
+  const [d, stats, plan] = await Promise.all([api('/api/dashboard'), api('/api/stats'), api('/api/plan')]);
+  const nextSess = plan.find((s) => !s.done_at) || plan[plan.length - 1];
+  const nextFigs = nextSess ? figsFor(nextSess.figs) : [];
   const quizByDoc = Object.fromEntries(d.quiz.map((r) => [r.doc, r]));
   const totalQ = d.quiz.reduce((a, r) => a + r.attempts, 0), rightQ = d.quiz.reduce((a, r) => a + r.correct, 0);
 
@@ -83,6 +213,12 @@ VIEWS.dashboard = async () => {
           ? Object.keys(META.docs).map((k) => quizByDoc[k] ? `${docName(k)}: ${pct(quizByDoc[k].correct, quizByDoc[k].attempts)}%` : null).filter(Boolean).join(' · ')
           : 'No answers yet. Target: 85%.'),
         h('a', { href: '#/quiz' }, 'Take the quiz'))),
+    h('div', { class: 'box' },
+      h('h2', {}, nextSess ? `Pictures for session ${nextSess.idx}: ${nextSess.title}` : 'Pictures'),
+      FIGS.length
+        ? (nextFigs.length ? figStrip(nextFigs, { max: 6 }) : h('p', { class: 'muted' }, 'This session has no pictures in the documents. Browse them all on the Visuals page.'))
+        : h('p', { class: 'muted' }, 'No pictures loaded yet. Upload the visuals packs on the Visuals page.'),
+      h('div', { class: 'row' }, h('a', { href: '#/visuals' }, `Browse all ${FIGS.length} pictures`), h('a', { href: '#/glossary' }, `Glossary (${GLOSSARY.length} abbreviations)`))),
     h('div', { class: 'grid' },
       h('div', { class: 'box' },
         h('h2', {}, 'Weakest quiz sections'),
@@ -125,7 +261,9 @@ VIEWS.review = async () => {
         return;
       }
       const c = r.card;
-      const ans = h('div', { class: 'a', hidden: true }, c.back);
+      const cardFigs = figsForCard(c);
+      const ans = h('div', { class: 'a', hidden: true }, ...txt(c.back),
+        figStrip(cardFigs, { max: 3, title: 'From the document' }));
       const grades = h('div', { class: 'grades', hidden: true },
         [['again', 'Again', 'see it again in 10 min', 'bad'], ['hard', 'Hard', 'shorter gap', 'warn'], ['good', 'Good', 'normal gap', 'good'], ['easy', 'Easy', 'longer gap', '']]
           .map(([g, label, hint, cls]) => h('button', { class: `btn ${cls}`, onclick: () => grade(c.id, g) }, label, h('small', {}, hint))));
@@ -136,7 +274,7 @@ VIEWS.review = async () => {
           c.is_new ? h('span', { class: 'pill good' }, 'New card') : null),
         h('div', { class: 'flash' },
           h('div', { class: 'label' }, `${docName(c.doc)} · ${c.section}`),
-          h('div', { class: 'q' }, c.front), ans),
+          h('div', { class: 'q' }, ...txt(c.front)), ans),
         show, grades);
       show.focus();
     } catch (e) { area.replaceChildren(errorBox(e)); }
@@ -175,8 +313,9 @@ VIEWS.plan = async () => {
           h('h3', {}, `Session ${s.idx}: ${s.title}`),
           h('div', { class: 'row' }, h('span', { class: 'pill' }, s.doc), h('span', { class: 'pill' }, s.secs),
             s.done_at ? h('span', { class: 'pill good' }, `Done ${fmtDate(s.done_at)}`) : null),
-          h('ul', {}, s.items.map((i) => h('li', {}, i))),
-          h('p', { class: 'muted' }, `Goal: ${s.goal}`)));
+          h('ul', {}, s.items.map((i) => h('li', {}, ...txt(i)))),
+          h('p', { class: 'muted' }, 'Goal: ', ...txt(s.goal)),
+          figStrip(figsFor(s.figs), { max: 6, title: 'Pictures from the documents' })));
     }),
   ];
 };
@@ -198,7 +337,7 @@ VIEWS.quiz = async () => {
         const r = await api(`/api/quiz/${q.id}/answer`, { method: 'POST', body: { chosen: j } });
         buttons[r.answer].classList.add('right');
         if (!r.correct) buttons[j].classList.add('wrong');
-        why.textContent = (r.correct ? 'Correct. ' : 'Not quite. ') + (r.why || '');
+        why.replaceChildren(r.correct ? 'Correct. ' : 'Not quite. ', ...txt(r.why || ''));
         why.hidden = false;
         answered++; if (r.correct) right++;
         score.textContent = `${right}/${answered} correct (${pct(right, answered)}%)`;
@@ -206,7 +345,7 @@ VIEWS.quiz = async () => {
     } }, t)));
     return h('div', { class: 'box' },
       h('div', { class: 'label' }, `${k + 1} · ${docName(q.doc)} · ${q.section || ''}`),
-      h('p', { style: 'font-weight:600' }, q.stem), opts, why,
+      h('p', { style: 'font-weight:600' }, ...txt(q.stem)), opts, why,
       q.custom ? h('div', {}, h('button', { class: 'btn bad', onclick: async () => { try { await api(`/api/quiz/${q.id}`, { method: 'DELETE' }); render(); } catch (e) { alertInline(e); } } }, 'Delete my question')) : null);
   });
 
@@ -261,7 +400,7 @@ VIEWS.cards = async () => {
     tbody.replaceChildren(...cards.filter((c) => !t || (c.front + ' ' + c.back + ' ' + c.section).toLowerCase().includes(t)).map((c) =>
       h('tr', {},
         h('td', {}, docName(c.doc), h('br'), h('span', { class: 'mono muted' }, c.section)),
-        h('td', {}, h('strong', {}, c.front), h('br'), c.back),
+        h('td', {}, h('strong', {}, ...txt(c.front)), h('br'), ...txt(c.back)),
         h('td', { class: 'n' }, c.due_at ? fmtDate(c.due_at) : h('span', { class: 'pill warn' }, 'new')),
         h('td', { class: 'n' }, c.lapses ? h('span', { class: 'pill bad' }, `${c.lapses}× missed`) : ''),
         h('td', {}, c.custom ? h('button', { class: 'btn bad', onclick: async () => { try { await api(`/api/cards/${c.id}`, { method: 'DELETE' }); render(); } catch (e) { alertInline(e); } } }, 'Delete') : ''))));
@@ -300,6 +439,8 @@ VIEWS.reference = async () => {
     rows.map((r) => h('tr', {}, r.map((x, i) => h('td', { class: i === 0 && !head ? 'n' : '' }, x))))));
   return [
     h('div', {}, h('div', { class: 'label' }, 'Quick reference'), h('h1', {}, 'Rules and numbers')),
+    FIGS.length ? h('div', { class: 'box' }, h('h2', {}, 'The system at a glance'),
+      figStrip(figsFor(['key:RSG-p037-1', 'key:AVR-fig2', ...FIGS.filter((f) => ['A1A', 'A6A', 'A8D'].includes(f.doc) && /architecture|overview|high availability|infrastructure/i.test(f.title)).slice(0, 9).map((f) => 'key:' + f.key)]), { max: 8 })) : null,
     h('div', { class: 'box' }, h('h2', {}, 'How a case moves'),
       h('div', { class: 'flow' }, ['L1 Client', 'L2 IAFIS Local', 'L2.5 IAFIS Tech', 'Technical Authority', 'L3 IDEMIA France']
         .flatMap((s, i) => i ? ['→', h('span', {}, s)] : [h('span', {}, s)])),
@@ -386,6 +527,125 @@ VIEWS.documents = async () => {
   ];
 };
 
+VIEWS.visuals = async () => {
+  await loadFigures();
+  const counts = {};
+  for (const f of FIGS) counts[f.doc] = (counts[f.doc] || 0) + 1;
+  const sel = h('select', { id: 'visDoc' }, h('option', { value: 'all' }, `All documents (${FIGS.length})`),
+    META.sourceGroups.map((g) => h('optgroup', { label: g.name },
+      g.codes.filter((c) => counts[c]).map((c) => h('option', { value: c }, `${srcName(c)} (${counts[c]})`)))));
+  sel.value = recall('visDoc', 'all');
+  if (![...sel.options].some((o) => o.value === sel.value)) sel.value = 'all';
+  const search = h('input', { type: 'search', id: 'visSearch', placeholder: 'Search captions, e.g. backup, NIST, ticket' });
+  const area = h('div', { style: 'display:flex;flex-direction:column;gap:18px' });
+  const status = h('span', { class: 'pill' });
+  let current = [];
+
+  const draw = () => {
+    const t = search.value.trim().toLowerCase();
+    current = FIGS.filter((f) => (sel.value === 'all' || f.doc === sel.value)
+      && (!t || `${f.title} ${f.note} ${srcName(f.doc)} ${f.sec}`.toLowerCase().includes(t)));
+    status.textContent = `${current.length} pictures`;
+    const groups = [];
+    for (const [i, f] of current.entries()) {
+      if (!groups.length || groups[groups.length - 1].doc !== f.doc) groups.push({ doc: f.doc, idx: [] });
+      groups[groups.length - 1].idx.push(i);
+    }
+    area.replaceChildren(...(groups.length ? groups.map((g) => h('section', { class: 'box' },
+      h('h2', {}, srcName(g.doc), ' ', h('span', { class: 'pill' }, g.idx.length)),
+      h('div', { class: 'figs' }, g.idx.map((i) => figTile(current, i)))))
+      : [h('p', { class: 'muted' }, FIGS.length ? 'No pictures match.' : 'No pictures loaded yet. Upload the visuals packs below.')]));
+  };
+  sel.addEventListener('change', () => { remember('visDoc', sel.value); draw(); });
+  search.addEventListener('input', draw);
+  draw();
+
+  const files = h('input', { type: 'file', id: 'packFiles', accept: '.tvpack', multiple: true });
+  const msg = h('p', { role: 'status', class: 'muted' });
+  const go = h('button', { class: 'btn primary', type: 'button', onclick: async () => {
+    const list = [...files.files];
+    if (!list.length) { msg.textContent = 'Choose one or more .tvpack files.'; return; }
+    go.disabled = true;
+    let total = 0;
+    try {
+      for (const [i, f] of list.entries()) {
+        msg.className = 'muted'; msg.textContent = `Encrypting and uploading ${f.name} (${i + 1} of ${list.length})…`;
+        const fd = new FormData(); fd.append('file', f);
+        const r = await api('/api/figures/pack', { method: 'POST', body: fd });
+        total += r.count;
+      }
+      msg.className = 'ok'; msg.textContent = `Done: ${total} pictures stored, encrypted.`;
+      setTimeout(render, 900);
+    } catch (e) { msg.className = 'error'; msg.textContent = e.message; }
+    go.disabled = false;
+  } }, 'Encrypt and upload');
+  const confirmIn = h('input', { type: 'text', id: 'figDel', placeholder: 'Type DELETE', size: 12 });
+  const del = h('button', { class: 'btn bad', type: 'button', onclick: async () => {
+    try { await api('/api/figures', { method: 'DELETE', body: { confirm: confirmIn.value } }); render(); } catch (e) { alertInline(e); }
+  } }, 'Delete all pictures');
+
+  return [
+    h('div', {}, h('div', { class: 'label' }, 'Pictures from the documents'), h('h1', {}, 'Visuals')),
+    h('div', { class: 'row' }, h('label', { for: 'visDoc', class: 'label' }, 'Document'), sel, search, status,
+      h('button', { class: 'btn', type: 'button', onclick: () => current.length && openLightbox(current, 0) }, 'Slideshow ▶')),
+    h('p', { class: 'muted' }, 'Click any picture to enlarge it. Use the arrow keys to move through them. Underlined abbreviations in captions show their meaning when you hover or tap.'),
+    area,
+    h('details', { class: 'box', open: FIGS.length ? null : true },
+      h('summary', { style: 'cursor:pointer;font-weight:700' }, FIGS.length ? 'Load or replace visuals packs' : 'Load the visuals packs'),
+      h('p', { class: 'muted' }, 'Choose all the .tvpack files at once. Each picture is encrypted with its own key before it is stored, the same as your PDFs. Uploading a pack again replaces its pictures.'),
+      h('div', { class: 'row' }, files, go), msg,
+      FIGS.length ? h('div', { class: 'row' }, confirmIn, del) : null),
+  ];
+};
+
+VIEWS.glossary = async () => {
+  const params = new URLSearchParams(location.hash.split('?')[1] || '');
+  const cats = [...new Set(GLOSSARY.map((g) => g.category).filter(Boolean))].sort();
+  const cat = h('select', { id: 'gCat' }, h('option', { value: 'all' }, 'All categories'), cats.map((c) => h('option', { value: c }, c)));
+  const search = h('input', { type: 'search', id: 'gSearch', placeholder: 'Search, e.g. TTR, matcher, Oracle', value: params.get('q') || '' });
+  const status = h('span', { class: 'pill' });
+  const letters = h('div', { class: 'letters' });
+  const list = h('div', { class: 'gl-list' });
+  const draw = () => {
+    const t = search.value.trim().toLowerCase();
+    const rows = GLOSSARY.filter((g) => (cat.value === 'all' || g.category === cat.value)
+      && (!t || `${g.abbr} ${g.term} ${g.meaning}`.toLowerCase().includes(t)))
+      .sort((a, b) => {
+        if (t) { const ea = a.abbr.toLowerCase() === t, eb = b.abbr.toLowerCase() === t; if (ea !== eb) return ea ? -1 : 1; }
+        return a.abbr.localeCompare(b.abbr, 'en', { sensitivity: 'base' });
+      });
+    status.textContent = `${rows.length} of ${GLOSSARY.length}`;
+    const byLetter = new Map();
+    for (const g of rows) {
+      const L = /[A-Z]/i.test(g.abbr[0]) ? g.abbr[0].toUpperCase() : '#';
+      if (!byLetter.has(L)) byLetter.set(L, []);
+      byLetter.get(L).push(g);
+    }
+    letters.replaceChildren(...[...byLetter.keys()].map((L) => h('a', { href: '#', onclick: (e) => { e.preventDefault(); document.getElementById(`gl-${L}`)?.scrollIntoView({ behavior: 'smooth' }); } }, L)));
+    list.replaceChildren(...[...byLetter.entries()].map(([L, gs]) => h('section', { id: `gl-${L}`, class: 'box' },
+      h('h2', {}, L),
+      gs.map((g) => h('div', { class: 'gl-item' },
+        h('div', { class: 'gl-abbr mono' }, g.abbr),
+        h('div', { class: 'gl-body' },
+          g.term ? h('div', { class: 'gl-term' }, g.term) : h('div', { class: 'gl-term muted' }, 'Not expanded in the documents'),
+          h('p', {}, g.meaning),
+          h('div', { class: 'row' }, g.category ? h('span', { class: 'pill warn' }, g.category) : null,
+            (g.docs || []).map((d) => h('span', { class: 'pill', title: srcName(d) }, d)))))))));
+    if (!rows.length) list.replaceChildren(h('p', { class: 'muted' }, 'No abbreviation matches.'));
+  };
+  cat.addEventListener('change', draw);
+  search.addEventListener('input', draw);
+  draw();
+  setTimeout(() => search.focus(), 0);
+  return [
+    h('div', {}, h('div', { class: 'label' }, 'Every abbreviation in the documents'), h('h1', {}, 'Glossary')),
+    h('div', { class: 'row' }, search, cat, status),
+    letters,
+    h('p', { class: 'muted' }, 'The tags show which documents use each abbreviation (hover a tag for the document name). These abbreviations are also underlined on your cards, quiz and plan.'),
+    list,
+  ];
+};
+
 VIEWS.security = async () => {
   const log = await api('/api/audit');
   return [
@@ -414,7 +674,7 @@ async function render() {
   });
   try {
     const nodes = await fn();
-    view.replaceChildren(...nodes);
+    view.replaceChildren(...nodes.flat().filter((n) => n !== null && n !== undefined && n !== false));
   } catch (e) {
     view.replaceChildren(errorBox(e));
   }
@@ -425,4 +685,7 @@ document.getElementById('logout').addEventListener('click', async () => {
 });
 window.addEventListener('hashchange', render);
 
-api('/api/meta').then((m) => { META = m; render(); }).catch((e) => view.replaceChildren(errorBox(e)));
+async function loadFigures() { try { FIGS = await api('/api/figures'); } catch { FIGS = []; } }
+Promise.all([api('/api/meta'), api('/api/glossary').catch(() => []), loadFigures()])
+  .then(([m, g]) => { META = m; GLOSSARY = g; buildAbbr(); render(); })
+  .catch((e) => view.replaceChildren(errorBox(e)));

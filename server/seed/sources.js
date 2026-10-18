@@ -1,0 +1,43 @@
+// Every source document the portal knows about. Codes are used by figures (Visuals)
+// and the glossary. T, C and E are also the card/quiz decks (see DOC_NAMES).
+
+export const SOURCE_GROUPS = [
+  { name: 'Support process (GLPI and escalation)', codes: ['T', 'C', 'E'] },
+  { name: 'JCF site documents', codes: ['RSG', 'SSP', 'AVR'] },
+  { name: 'MBIS administrator training', codes: ['A0A', 'A0B', 'A0C', 'A0D', 'A1A', 'A1D', 'A2A', 'A3A', 'A3D', 'A4A', 'A5A', 'A5B', 'A5D', 'A6A', 'A6C', 'A6D', 'A7B', 'A7C', 'A7D', 'A8D', 'A9A', 'A9B', 'A9C'] },
+  { name: 'Face Expert training', codes: ['F8A', 'F8B'] },
+];
+
+export const SOURCES = {
+  T: 'GLPI User Manual – Technical Support (OPS-I&S-MAN-001)',
+  C: 'GLPI User Manual – Clients (OPS-SOP-MAN-002)',
+  E: 'Incident Management and Case Escalation Procedures',
+  RSG: 'JCF Remote Sites Installation Guide v2.14',
+  SSP: 'JCF Start/Stop Procedure',
+  AVR: 'JCF Augmented Vision (AV) Design Document',
+  A0A: 'Admin 0A – Introduction',
+  A0B: 'Admin 0B – Introduction',
+  A0C: 'Admin 0C – Frontend',
+  A0D: 'Admin 0D – Frontend',
+  A1A: 'Admin 1A – Architecture',
+  A1D: 'Admin 1D – Restart System',
+  A2A: 'Admin 2A – Administration',
+  A3A: 'Admin 3A – Oracle Presentation',
+  A3D: 'Admin 3D – Database Data Model',
+  A4A: 'Admin 4A – Support',
+  A5A: 'Admin 5A – DES and NIST',
+  A5B: 'Admin 5B – MESA Administration',
+  A5D: 'Admin 5D – Remote Clusters',
+  A6A: 'Admin 6A – MBSS Architecture',
+  A6C: 'Admin 6C – MBSS Administration',
+  A6D: 'Admin 6D – MBSS Exercise',
+  A7B: 'Admin 7B – Administration Tools',
+  A7C: 'Admin 7C – Licenses',
+  A7D: 'Admin 7D – Reports',
+  A8D: 'Admin 8D – High Availability',
+  A9A: 'Admin 9A – Backup and Restore',
+  A9B: 'Admin 9B – Batches',
+  A9C: 'Admin 9C – Administrative Tasks',
+  F8A: 'Face Expert 8A – Operator Training',
+  F8B: 'Face Expert 8B – Administration',
+};

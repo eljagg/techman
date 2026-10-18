@@ -8,6 +8,7 @@ import { cfAccess } from './cfaccess.js';
 import { requireSession, csrfGuard, loginHandler, logoutHandler, logoutEverywhere, hasSession } from './auth.js';
 import { study } from './routes/study.js';
 import { documents } from './routes/documents.js';
+import { figures } from './routes/figures.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const clientDir = path.join(here, '..', 'client');
@@ -70,6 +71,7 @@ app.use((req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
 app.post('/api/logout', logoutHandler);
 app.post('/api/logout-all', logoutEverywhere);
 app.use('/api/documents', documents);
+app.use('/api/figures', figures);
 app.use('/api', study);
 app.use('/app', express.static(path.join(clientDir, 'app'), { index: false }));
 app.get('/', (req, res) => res.sendFile(path.join(clientDir, 'app', 'index.html')));

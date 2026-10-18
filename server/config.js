@@ -47,6 +47,7 @@ export const config = {
   idleMinutes: Number(env.SESSION_IDLE_MINUTES || 120),
   newCardsPerDay: Number(env.NEW_CARDS_PER_DAY || 15),
   maxUploadMb: Number(env.MAX_UPLOAD_MB || 30),
+  maxPackMb: Number(env.MAX_PACK_MB || 40),
   timeZone: env.APP_TIME_ZONE || 'America/Jamaica',
 };
 

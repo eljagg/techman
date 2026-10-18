@@ -1,5 +1,5 @@
-// Re-wraps every document key under a new master key. The documents themselves are
-// not re-encrypted; only their small data keys are, so this runs in seconds.
+// Re-wraps every document and image data key under a new master key. The files
+// themselves are not re-encrypted; only their small data keys are, so this runs in seconds.
 //
 // Usage (in Railway: Service → ⋯ → Run command, or locally with DATABASE_URL set):
 //   FILE_MASTER_KEY_OLD=<current key> FILE_MASTER_KEY=<new key> npm run rotate-key
@@ -22,21 +22,25 @@ const pool = new pg.Pool({
 const client = await pool.connect();
 try {
   await client.query('BEGIN');
-  const { rows } = await client.query(`SELECT id, wrap_iv, wrap_tag, wrapped_key, key_id FROM documents FOR UPDATE`);
-  let done = 0, skipped = 0;
-  for (const row of rows) {
-    if (row.key_id === keyId(newKey)) { skipped++; continue; }
-    const dek = unwrapKey(oldKey, row);
-    const w = wrapKey(newKey, dek, row.id);
-    dek.fill(0);
-    await client.query(
-      `UPDATE documents SET wrap_iv=$2, wrap_tag=$3, wrapped_key=$4, key_id=$5 WHERE id=$1`,
-      [row.id, w.wrapIv, w.wrapTag, w.wrappedKey, w.keyId]
-    );
-    done++;
+  for (const table of ['documents', 'figures']) {
+    const exists = await client.query(`SELECT to_regclass($1) AS t`, [table]);
+    if (!exists.rows[0].t) continue;
+    const { rows } = await client.query(`SELECT id, wrap_iv, wrap_tag, wrapped_key, key_id FROM ${table} FOR UPDATE`);
+    let done = 0, skipped = 0;
+    for (const row of rows) {
+      if (row.key_id === keyId(newKey)) { skipped++; continue; }
+      const dek = unwrapKey(oldKey, row);
+      const w = wrapKey(newKey, dek, row.id);
+      dek.fill(0);
+      await client.query(
+        `UPDATE ${table} SET wrap_iv=$2, wrap_tag=$3, wrapped_key=$4, key_id=$5 WHERE id=$1`,
+        [row.id, w.wrapIv, w.wrapTag, w.wrappedKey, w.keyId]
+      );
+      done++;
+    }
+    console.log(`${table}: re-wrapped ${done} key(s); ${skipped} already used the new key.`);
   }
   await client.query('COMMIT');
-  console.log(`Re-wrapped ${done} document key(s); ${skipped} already used the new key.`);
 } catch (e) {
   await client.query('ROLLBACK');
   console.error('Rotation failed, nothing was changed:', e.message);

@@ -119,6 +119,28 @@ export function decryptDocument(masterKey, row) {
   }
 }
 
+// Figures (images from the documents): one data key per figure encrypts both the
+// full-size image and its thumbnail, each with its own IV and AAD.
+export function encryptFigure(masterKey, id, full, thumb) {
+  const dek = crypto.randomBytes(32);
+  const f = gcmEncrypt(dek, full, `fig:${id}:full`);
+  const t = gcmEncrypt(dek, thumb, `fig:${id}:thumb`);
+  const wrapped = wrapKey(masterKey, dek, id);
+  dek.fill(0);
+  return { iv: f.iv, tag: f.tag, ciphertext: f.ct, thumbIv: t.iv, thumbTag: t.tag, thumbCt: t.ct, ...wrapped };
+}
+
+export function decryptFigure(masterKey, row, variant) {
+  const dek = unwrapKey(masterKey, row);
+  try {
+    return variant === 'thumb'
+      ? gcmDecrypt(dek, row.thumb_iv, row.thumb_ct, row.thumb_tag, `fig:${row.id}:thumb`)
+      : gcmDecrypt(dek, row.iv, row.ciphertext, row.tag, `fig:${row.id}:full`);
+  } finally {
+    dek.fill(0);
+  }
+}
+
 export function sha256Hex(buf) {
   return crypto.createHash('sha256').update(buf).digest('hex');
 }

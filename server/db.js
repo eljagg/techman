@@ -101,6 +101,33 @@ CREATE TABLE IF NOT EXISTS quiz_questions (
   answer     INTEGER NOT NULL,
   why        TEXT NOT NULL DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS figures (
+  id          UUID PRIMARY KEY,
+  fkey        TEXT UNIQUE NOT NULL,
+  doc         TEXT NOT NULL,
+  page        INTEGER NOT NULL DEFAULT 0,
+  sec         TEXT NOT NULL DEFAULT '',
+  title       TEXT NOT NULL DEFAULT '',
+  note        TEXT NOT NULL DEFAULT '',
+  ord         INTEGER NOT NULL DEFAULT 0,
+  w           INTEGER NOT NULL DEFAULT 0,
+  h           INTEGER NOT NULL DEFAULT 0,
+  size_bytes  INTEGER NOT NULL,
+  iv          BYTEA NOT NULL,
+  tag         BYTEA NOT NULL,
+  ciphertext  BYTEA NOT NULL,
+  thumb_iv    BYTEA NOT NULL,
+  thumb_tag   BYTEA NOT NULL,
+  thumb_ct    BYTEA NOT NULL,
+  wrap_iv     BYTEA NOT NULL,
+  wrap_tag    BYTEA NOT NULL,
+  wrapped_key BYTEA NOT NULL,
+  key_id      TEXT NOT NULL,
+  pack        TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS figures_doc ON figures (doc, ord);
+ALTER TABLE plan_sessions ADD COLUMN IF NOT EXISTS figs JSONB NOT NULL DEFAULT '[]';
 CREATE TABLE IF NOT EXISTS quiz_attempts (
   id          BIGSERIAL PRIMARY KEY,
   question_id INTEGER NOT NULL REFERENCES quiz_questions(id) ON DELETE CASCADE,
@@ -115,10 +142,10 @@ export async function migrateAndSeed() {
 
   for (const s of PLAN) {
     await q(
-      `INSERT INTO plan_sessions (idx, title, doc, secs, items, goal) VALUES ($1,$2,$3,$4,$5,$6)
+      `INSERT INTO plan_sessions (idx, title, doc, secs, items, goal, figs) VALUES ($1,$2,$3,$4,$5,$6,$7)
        ON CONFLICT (idx) DO UPDATE SET title=EXCLUDED.title, doc=EXCLUDED.doc, secs=EXCLUDED.secs,
-         items=EXCLUDED.items, goal=EXCLUDED.goal`,
-      [s.idx, s.title, s.doc, s.secs, JSON.stringify(s.items), s.goal]
+         items=EXCLUDED.items, goal=EXCLUDED.goal, figs=EXCLUDED.figs`,
+      [s.idx, s.title, s.doc, s.secs, JSON.stringify(s.items), s.goal, JSON.stringify(s.figs || [])]
     );
   }
   // Seeded study content is upserted by a stable key, so redeploys refresh wording

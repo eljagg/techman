@@ -5,6 +5,8 @@ import { q } from '../db.js';
 import { config } from '../config.js';
 import { schedule, GRADES } from '../srs.js';
 import { DOC_NAMES } from '../seed/content.js';
+import { SOURCES, SOURCE_GROUPS } from '../seed/sources.js';
+import { GLOSSARY } from '../seed/glossary.js';
 
 export const study = express.Router();
 
@@ -23,7 +25,13 @@ async function newSeenToday() {
 }
 
 study.get('/meta', (req, res) => {
-  res.json({ docs: DOC_NAMES, email: req.cfEmail, timeZone: config.timeZone, newPerDay: config.newCardsPerDay });
+  res.json({ docs: DOC_NAMES, sources: SOURCES, sourceGroups: SOURCE_GROUPS, email: req.cfEmail,
+    timeZone: config.timeZone, newPerDay: config.newCardsPerDay });
+});
+
+study.get('/glossary', (req, res) => {
+  res.set('Cache-Control', 'private, max-age=3600');
+  res.json(GLOSSARY);
 });
 
 study.get('/dashboard', async (req, res, next) => {

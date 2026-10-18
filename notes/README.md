@@ -29,7 +29,7 @@ procedures. Node 22 + Express + Postgres on Railway, behind Cloudflare Access.
 Limits to be aware of:
 - Anyone who controls your Railway project can read both the variables and the database, and so could decrypt. Turn on two-factor sign-in for Railway, GitHub and Cloudflare.
 - If `FILE_MASTER_KEY` is lost, the documents cannot be recovered. Keep it in your password manager.
-- To change the master key, use `npm run rotate-key` (section 6).
+- To change the master key, use `npm run rotate-key` (section 7). It re-wraps the keys of documents and pictures.
 
 ## 3. Variables (Railway → techman service → Variables)
 
@@ -44,7 +44,7 @@ Limits to be aware of:
 | `CF_ACCESS_AUD` | the Application Audience (AUD) tag of the Access application |
 | `ALLOWED_EMAIL` | the one email allowed by your Access policy |
 
-Optional: `SESSION_HOURS` (12), `SESSION_IDLE_MINUTES` (120), `NEW_CARDS_PER_DAY` (15), `MAX_UPLOAD_MB` (30), `APP_TIME_ZONE` (America/Jamaica).
+Optional: `SESSION_HOURS` (12), `SESSION_IDLE_MINUTES` (120), `NEW_CARDS_PER_DAY` (15), `MAX_UPLOAD_MB` (30), `MAX_PACK_MB` (40), `APP_TIME_ZONE` (America/Jamaica).
 
 The app will not start until every required variable is set. That is deliberate.
 
@@ -87,7 +87,12 @@ Railway → techman → Settings → Networking → remove the `*.up.railway.app
 ### 4.6 Load the documents
 Sign in → Documents → upload each Spanish original and each English translation PDF.
 
-## 5. Day-to-day
+## 5. Visuals and glossary
+- **Visuals** shows the pictures from the documents: GLPI screenshots, the JCF site guides, the AV design, every administrator training deck and the Face Expert training. They also appear inside Plan sessions, on Review cards (after you show the answer), on Today and on Reference.
+- Pictures are loaded from `.tvpack` files on the Visuals page. Each picture and its thumbnail is encrypted with its own data key, wrapped by `FILE_MASTER_KEY`, exactly like the PDFs. The packs are not stored in GitHub.
+- **Glossary** lists every abbreviation found in the documents. The same abbreviations are underlined on cards, quiz questions and plan items; hover or tap one to see its meaning.
+
+## 6. Day-to-day
 - **Today** shows what is due, new cards left for the day, plan progress, quiz accuracy and your weakest sections.
 - **Review** is spaced repetition: Again (10 min), Hard, Good, Easy. Gaps grow as you remember.
 - **Plan** is the 10-session plan; tick sessions as you finish.
@@ -97,11 +102,11 @@ Sign in → Documents → upload each Spanish original and each English translat
 
 Seeded cards and questions live in `server/seed/content.js`. Edit and redeploy to change wording; your review history is kept.
 
-## 6. Rotating the master key
+## 7. Rotating the master key
 1. Generate a new key: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`
 2. Railway → techman → add `FILE_MASTER_KEY_OLD` = current key, set `FILE_MASTER_KEY` = new key.
 3. Run `npm run rotate-key` in the service (Railway → ⋯ → Run command).
 4. Open a document to confirm, then delete `FILE_MASTER_KEY_OLD`.
 
-## 7. Local development
+## 8. Local development
 Use a local Postgres and set `CF_ACCESS_DISABLED=true` (refused when `NODE_ENV=production`).
