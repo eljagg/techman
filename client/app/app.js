@@ -183,9 +183,9 @@ function openLightbox(list, start) {
 const VIEWS = {};
 
 VIEWS.dashboard = async () => {
-  const [d, stats, plan] = await Promise.all([api('/api/dashboard'), api('/api/stats'), api('/api/plan')]);
+  const [d, stats, plan, lessons] = await Promise.all([api('/api/dashboard'), api('/api/stats'), api('/api/plan'), loadLessons()]);
   const nextSess = plan.find((s) => !s.done_at) || plan[plan.length - 1];
-  const nextFigs = nextSess ? figsFor(nextSess.figs) : [];
+  const nextL = nextSess ? lessons[nextSess.idx] : null;
   const quizByDoc = Object.fromEntries(d.quiz.map((r) => [r.doc, r]));
   const totalQ = d.quiz.reduce((a, r) => a + r.attempts, 0), rightQ = d.quiz.reduce((a, r) => a + r.correct, 0);
 
@@ -213,11 +213,14 @@ VIEWS.dashboard = async () => {
           ? Object.keys(META.docs).map((k) => quizByDoc[k] ? `${docName(k)}: ${pct(quizByDoc[k].correct, quizByDoc[k].attempts)}%` : null).filter(Boolean).join(' · ')
           : 'No answers yet. Target: 85%.'),
         h('a', { href: '#/quiz' }, 'Take the quiz'))),
+    nextSess && nextL ? h('div', { class: 'box sess next', style: 'display:flex' },
+      h('div', { style: 'display:flex;flex-direction:column;gap:8px;min-width:0;width:100%' },
+        h('div', { class: 'row', style: 'justify-content:space-between' },
+          h('div', {}, h('div', { class: 'label' }, nextSess.done_at ? 'All lessons done – review' : 'Your next lesson'), h('h2', {}, `Lesson ${nextSess.idx}: ${nextSess.title}`)),
+          h('a', { class: 'btn primary', href: `#/lesson?n=${nextSess.idx}` }, 'Start lesson ▶')),
+        h('p', {}, ...txt(nextL.intro)),
+        FIGS.length ? stepThumbs(nextL, 6) : h('p', { class: 'note' }, 'Screenshots are not loaded yet. Upload the five packs on the ', h('a', { href: '#/visuals' }, 'Visuals'), ' page.'))) : null,
     h('div', { class: 'box' },
-      h('h2', {}, nextSess ? `Pictures for session ${nextSess.idx}: ${nextSess.title}` : 'Pictures'),
-      FIGS.length
-        ? (nextFigs.length ? figStrip(nextFigs, { max: 6 }) : h('p', { class: 'muted' }, 'This session has no pictures in the documents. Browse them all on the Visuals page.'))
-        : h('p', { class: 'muted' }, 'No pictures loaded yet. Upload the visuals packs on the Visuals page.'),
       h('div', { class: 'row' }, h('a', { href: '#/visuals' }, `Browse all ${FIGS.length} pictures`), h('a', { href: '#/glossary' }, `Glossary (${GLOSSARY.length} abbreviations)`))),
     h('div', { class: 'grid' },
       h('div', { class: 'box' },
@@ -289,34 +292,176 @@ VIEWS.review = async () => {
     h('p', { class: 'muted' }, 'Read the question, answer it out loud or on paper, then show the answer and grade yourself honestly. Cards you get right come back after longer and longer gaps.')];
 };
 
+// ---------- lessons ----------
+let LESSONS = null;
+async function loadLessons() { if (!LESSONS) LESSONS = await api('/api/lessons'); return LESSONS; }
+const figByKey = (k) => FIGS.find((f) => f.key === k);
+
+function drawDiagram(d) {
+  if (!d) return null;
+  const tone = (t) => `tone-${t || 'grey'}`;
+  let body;
+  if (d.type === 'flow') {
+    body = h('div', { class: 'dflow' }, d.nodes.flatMap((n, i) => [
+      i ? h('div', { class: 'darrow', 'aria-hidden': 'true' }, '→') : null,
+      h('div', { class: `dnode ${tone(n.tone)}` }, h('strong', {}, ...txt(n.t)), n.s ? h('span', {}, ...txt(n.s)) : null)]));
+  } else if (d.type === 'cards') {
+    body = h('div', { class: 'dcards' }, d.items.map((c) => h('div', { class: `dcard ${tone(c.tone)}` },
+      h('strong', {}, ...txt(c.t)), h('ul', {}, (c.list || []).map((x) => h('li', {}, ...txt(x)))))));
+  } else if (d.type === 'table') {
+    body = h('div', { class: 'tw' }, h('table', { class: 'dtable' },
+      h('tr', {}, d.head.map((x) => h('th', {}, x))),
+      d.rows.map((r) => h('tr', {}, r.map((x, i) => h('td', { class: i === 0 ? 'dkey' : '' }, ...txt(x)))))));
+  } else if (d.type === 'timeline') {
+    body = h('ol', { class: 'dtime' }, d.items.map((it) => h('li', { class: tone(it.tone) },
+      h('span', { class: 'dwhen mono' }, it.when), h('div', {}, h('strong', {}, ...txt(it.t)), h('div', {}, ...txt(it.s))))));
+  } else if (d.type === 'contacts') {
+    body = h('div', { class: 'dcontacts' }, d.rows.map((r) => h('div', { class: `drow ${r.ok ? 'ok' : 'no'}` },
+      h('span', { class: 'dmark', 'aria-label': r.ok ? 'allowed' : 'not allowed' }, r.ok ? '✓' : '✕'),
+      h('span', { class: 'dfrom' }, r.from), h('span', { class: 'dline' }, r.ok ? '──▶' : '─╳─'), h('span', { class: 'dto' }, r.to),
+      h('span', { class: 'dwhy muted' }, ...txt(r.why)))));
+  }
+  return h('figure', { class: 'diagram' }, d.title ? h('figcaption', { class: 'label' }, d.title) : null, body,
+    d.note ? h('p', { class: 'muted' }, ...txt(d.note)) : null);
+}
+
+function stepThumbs(lesson, max = 6) {
+  const keys = [];
+  for (const st of lesson.steps) for (const k of st.figs || []) if (!keys.includes(k)) keys.push(k);
+  const figs = keys.map(figByKey).filter(Boolean);
+  if (!figs.length) {
+    const diagrams = lesson.steps.filter((st) => st.diagram).length;
+    return diagrams ? h('p', { class: 'muted' }, `${diagrams} diagrams in this lesson.`) : null;
+  }
+  return figStrip(figs, { max });
+}
+
 VIEWS.plan = async () => {
-  const rows = await api('/api/plan');
+  const [rows, lessons] = await Promise.all([api('/api/plan'), loadLessons()]);
   const done = rows.filter((r) => r.done_at).length;
+  const next = rows.find((r) => !r.done_at);
   return [
-    h('div', {}, h('div', { class: 'label' }, `${done} of ${rows.length} sessions done`), h('h1', {}, 'Ten-session study plan')),
+    h('div', {}, h('div', { class: 'label' }, `${done} of ${rows.length} lessons done`), h('h1', {}, 'Study plan')),
     h('div', { class: 'box' },
-      h('h2', {}, 'Each session (about 45 minutes)'),
+      h('h2', {}, 'How each lesson works'),
       h('ol', { style: 'margin:0;padding-left:20px' },
-        h('li', {}, 'Preview, 5 min: skim the headings and tables; write 2–3 questions you expect answered.'),
-        h('li', {}, 'Read actively, 20 min: mark every number, every "must/never" rule, every role name.'),
-        h('li', {}, 'Recall, 5 min: close the document; write a one-page summary from memory; fix gaps in another colour.'),
-        h('li', {}, 'Review, 10 min: clear the due cards for that document.'),
-        h('li', {}, 'Apply, 5 min: answer that document\'s quiz questions as if a real ticket landed.'))),
+        h('li', {}, 'Go through it step by step. Each step shows the real screen or a diagram, what to do, what to look for, and why.'),
+        h('li', {}, 'Click any picture to see it full size.'),
+        h('li', {}, 'At the end, answer the check questions out loud before revealing the answers.'),
+        h('li', {}, 'Mark the lesson done, then clear that lesson\'s due cards in Review.')),
+      FIGS.length ? null : h('p', { class: 'note' }, 'The screenshots are not loaded yet. Go to ', h('a', { href: '#/visuals' }, 'Visuals'), ' and upload the five packs; the diagrams already work.')),
     ...rows.map((s) => {
-      const cb = h('input', { type: 'checkbox', id: `plan${s.idx}`, checked: Boolean(s.done_at) });
+      const L = lessons[s.idx];
+      const cb = h('input', { type: 'checkbox', id: `plan${s.idx}`, checked: Boolean(s.done_at), 'aria-label': 'Mark done' });
       cb.addEventListener('change', async () => {
         try { await api(`/api/plan/${s.idx}`, { method: 'POST', body: { done: cb.checked } }); render(); }
         catch (e) { alertInline(e); }
       });
-      return h('label', { class: 'box sess' + (s.done_at ? ' done' : ''), for: `plan${s.idx}` }, cb,
-        h('div', { style: 'display:flex;flex-direction:column;gap:6px;min-width:0' },
-          h('h3', {}, `Session ${s.idx}: ${s.title}`),
+      return h('div', { class: 'box sess' + (s.done_at ? ' done' : '') + (next && next.idx === s.idx ? ' next' : '') }, cb,
+        h('div', { style: 'display:flex;flex-direction:column;gap:8px;min-width:0' },
+          h('div', { class: 'row', style: 'justify-content:space-between' },
+            h('h3', {}, `Lesson ${s.idx}: ${s.title}`),
+            h('a', { class: 'btn primary', href: `#/lesson?n=${s.idx}` }, s.done_at ? 'Review lesson' : 'Start lesson ▶')),
           h('div', { class: 'row' }, h('span', { class: 'pill' }, s.doc), h('span', { class: 'pill' }, s.secs),
+            L ? h('span', { class: 'pill good' }, `${L.steps.length} steps`) : null,
             s.done_at ? h('span', { class: 'pill good' }, `Done ${fmtDate(s.done_at)}`) : null),
-          h('ul', {}, s.items.map((i) => h('li', {}, ...txt(i)))),
-          h('p', { class: 'muted' }, 'Goal: ', ...txt(s.goal)),
-          figStrip(figsFor(s.figs), { max: 6, title: 'Pictures from the documents' })));
+          L ? h('p', {}, ...txt(L.intro)) : null,
+          L ? stepThumbs(L) : null,
+          h('details', {}, h('summary', { class: 'muted', style: 'cursor:pointer' }, 'Topics covered'),
+            h('ul', {}, s.items.map((i) => h('li', {}, ...txt(i)))), h('p', { class: 'muted' }, 'Goal: ', ...txt(s.goal)))));
     }),
+  ];
+};
+
+let lessonKeys = null;
+VIEWS.lesson = async () => {
+  const params = new URLSearchParams(location.hash.split('?')[1] || '');
+  const n = Number(params.get('n')) || 1;
+  const [rows, lessons] = await Promise.all([api('/api/plan'), loadLessons()]);
+  const sess = rows.find((r) => r.idx === n), L = lessons[n];
+  if (!sess || !L) return [errorBox(new Error('Lesson not found.'))];
+  const total = L.steps.length + 1; // last page = check yourself
+  let i = Math.min(Math.max(Number(params.get('s')) || 0, 0), total - 1);
+  const stage = h('div', {});
+  const bar = h('span', {});
+  const dots = h('div', { class: 'stepdots' });
+  const go = (k) => { i = Math.min(Math.max(k, 0), total - 1); history.replaceState(null, '', `#/lesson?n=${n}&s=${i}`); draw(); window.scrollTo({ top: 0 }); };
+
+  function visual(st) {
+    const figs = (st.figs || []).map((k) => figByKey(k) || { key: k, missing: true });
+    const present = figs.filter((f) => !f.missing);
+    const parts = [];
+    if (figs.length) {
+      const main = figs[0];
+      parts.push(main.missing
+        ? h('div', { class: 'imgmissing' }, 'Screenshot not loaded yet. ', h('a', { href: '#/visuals' }, 'Upload the visuals packs'), '.')
+        : h('button', { class: 'mainimg', type: 'button', onclick: () => openLightbox(present, 0), title: 'Click to enlarge' },
+            h('img', { src: figUrl(main, 'full'), alt: figCaption(main) }), h('span', { class: 'zoom' }, '⤢ Enlarge')));
+      if (present.length > 1) parts.push(h('div', { class: 'figs small' }, present.slice(1).map((_, j) => figTile(present, j + 1))));
+    }
+    if (st.diagram) parts.push(drawDiagram(st.diagram));
+    return parts;
+  }
+
+  function draw() {
+    bar.replaceChildren(h('div', { class: 'bar' }, h('span', { style: `width:${pct(i + 1, total)}%` })));
+    dots.replaceChildren(...Array.from({ length: total }, (_, k) => h('button', {
+      class: 'dot' + (k === i ? ' on' : '') + (k < i ? ' past' : ''), type: 'button', onclick: () => go(k),
+      title: k < L.steps.length ? L.steps[k].title : 'Check yourself', 'aria-label': `Step ${k + 1}` }, k < L.steps.length ? String(k + 1) : '✓')));
+    const nav = h('div', { class: 'row lessonnav' },
+      h('button', { class: 'btn', type: 'button', disabled: i === 0, onclick: () => go(i - 1) }, '‹ Back'),
+      h('span', { class: 'muted' }, i < L.steps.length ? `Step ${i + 1} of ${L.steps.length}` : 'Check yourself'),
+      i < total - 1 ? h('button', { class: 'btn primary', type: 'button', onclick: () => go(i + 1) }, 'Next ›') : null);
+    if (i < L.steps.length) {
+      const st = L.steps[i];
+      const vis = visual(st);
+      stage.replaceChildren(
+        h('div', { class: 'lesson' + (vis.length ? '' : ' novis') },
+          vis.length ? h('div', { class: 'lvis' }, ...vis) : null,
+          h('div', { class: 'ltext' },
+            h('div', { class: 'label' }, `Step ${i + 1}`),
+            h('h2', {}, ...txt(st.title)),
+            st.do?.length ? h('div', { class: 'ldo' }, h('div', { class: 'ltag' }, 'Do this'), h('ol', {}, st.do.map((x) => h('li', {}, ...txt(x))))) : null,
+            st.look ? h('div', { class: 'llook' }, h('div', { class: 'ltag' }, 'Look for this in the picture'), h('p', {}, ...txt(st.look))) : null,
+            st.why ? h('div', { class: 'lwhy' }, h('div', { class: 'ltag' }, 'Why it matters'), h('p', {}, ...txt(st.why))) : null)),
+        nav);
+    } else {
+      const checks = L.check.map((c, k) => {
+        const ans = h('p', { class: 'a', hidden: true }, ...txt(c.a));
+        const btn = h('button', { class: 'btn', type: 'button', onclick: () => { ans.hidden = false; btn.hidden = true; } }, 'Show answer');
+        return h('div', { class: 'box' }, h('div', { class: 'label' }, `Question ${k + 1}`), h('p', { style: 'font-weight:700' }, ...txt(c.q)), btn, ans);
+      });
+      const nextSess = rows.find((r) => r.idx === n + 1);
+      stage.replaceChildren(
+        h('div', { style: 'display:flex;flex-direction:column;gap:12px' },
+          h('h2', {}, 'Check yourself'),
+          h('p', { class: 'muted' }, 'Answer each one out loud or on paper first. Then reveal.'),
+          ...checks,
+          h('div', { class: 'row' },
+            sess.done_at ? h('span', { class: 'pill good' }, `Done ${fmtDate(sess.done_at)}`)
+              : h('button', { class: 'btn good', type: 'button', onclick: async () => {
+                  try { await api(`/api/plan/${n}`, { method: 'POST', body: { done: true } }); sess.done_at = new Date().toISOString(); draw(); }
+                  catch (e) { alertInline(e); } } }, '✓ Mark lesson done'),
+            h('a', { class: 'btn', href: '#/review' }, 'Review cards'),
+            nextSess ? h('a', { class: 'btn primary', href: `#/lesson?n=${n + 1}` }, `Next lesson: ${nextSess.title} ›`) : null)),
+        nav);
+    }
+  }
+  if (lessonKeys) document.removeEventListener('keydown', lessonKeys);
+  lessonKeys = (e) => {
+    if (!location.hash.startsWith('#/lesson') || (LB && LB.dlg.open) || /input|textarea|select/i.test(e.target.tagName)) return;
+    if (e.key === 'ArrowRight') go(i + 1);
+    if (e.key === 'ArrowLeft') go(i - 1);
+  };
+  document.addEventListener('keydown', lessonKeys);
+  draw();
+  return [
+    h('div', {}, h('a', { href: '#/plan', class: 'muted' }, '‹ All lessons'),
+      h('div', { class: 'label', style: 'margin-top:8px' }, `Lesson ${n} of ${rows.length} · ${sess.doc} ${sess.secs}`),
+      h('h1', {}, sess.title)),
+    h('p', {}, ...txt(L.intro)),
+    bar, dots, stage,
+    h('p', { class: 'muted' }, 'Tip: use the ← and → keys to move between steps.'),
   ];
 };
 
@@ -533,7 +678,7 @@ VIEWS.visuals = async () => {
   for (const f of FIGS) counts[f.doc] = (counts[f.doc] || 0) + 1;
   const sel = h('select', { id: 'visDoc' }, h('option', { value: 'all' }, `All documents (${FIGS.length})`),
     META.sourceGroups.map((g) => h('optgroup', { label: g.name },
-      g.codes.filter((c) => counts[c]).map((c) => h('option', { value: c }, `${srcName(c)} (${counts[c]})`)))));
+      g.codes.map((c) => h('option', { value: c }, `${srcName(c)} (${counts[c] || 0})`)))));
   sel.value = recall('visDoc', 'all');
   if (![...sel.options].some((o) => o.value === sel.value)) sel.value = 'all';
   const search = h('input', { type: 'search', id: 'visSearch', placeholder: 'Search captions, e.g. backup, NIST, ticket' });
@@ -554,7 +699,7 @@ VIEWS.visuals = async () => {
     area.replaceChildren(...(groups.length ? groups.map((g) => h('section', { class: 'box' },
       h('h2', {}, srcName(g.doc), ' ', h('span', { class: 'pill' }, g.idx.length)),
       h('div', { class: 'figs' }, g.idx.map((i) => figTile(current, i)))))
-      : [h('p', { class: 'muted' }, FIGS.length ? 'No pictures match.' : 'No pictures loaded yet. Upload the visuals packs below.')]));
+      : [h('p', { class: 'muted' }, FIGS.length ? 'No pictures in this document match.' : 'No pictures loaded yet. Upload the visuals packs above.')]));
   };
   sel.addEventListener('change', () => { remember('visDoc', sel.value); draw(); });
   search.addEventListener('input', draw);
@@ -584,17 +729,23 @@ VIEWS.visuals = async () => {
     try { await api('/api/figures', { method: 'DELETE', body: { confirm: confirmIn.value } }); render(); } catch (e) { alertInline(e); }
   } }, 'Delete all pictures');
 
+  const uploader = h('details', { class: 'box' + (FIGS.length ? '' : ' uploadfirst'), open: FIGS.length ? null : true },
+    h('summary', { style: 'cursor:pointer;font-weight:700' }, FIGS.length ? 'Load or replace visuals packs' : 'Step 1: load the pictures (one time)'),
+    h('ol', { style: 'margin:0;padding-left:20px' },
+      h('li', {}, 'Click "Choose Files" and open your TECHMAN\\visuals-packs folder.'),
+      h('li', {}, 'Select all five .tvpack files (Ctrl+A), then Open.'),
+      h('li', {}, 'Click "Encrypt and upload" and wait for "Done: 533 pictures stored".')),
+    h('p', { class: 'muted' }, 'Each picture is encrypted with its own key before it is stored, the same as your PDFs. Uploading a pack again replaces its pictures.'),
+    h('div', { class: 'row' }, files, go), msg,
+    FIGS.length ? h('div', { class: 'row' }, confirmIn, del) : null);
   return [
     h('div', {}, h('div', { class: 'label' }, 'Pictures from the documents'), h('h1', {}, 'Visuals')),
+    FIGS.length ? null : uploader,
     h('div', { class: 'row' }, h('label', { for: 'visDoc', class: 'label' }, 'Document'), sel, search, status,
       h('button', { class: 'btn', type: 'button', onclick: () => current.length && openLightbox(current, 0) }, 'Slideshow ▶')),
     h('p', { class: 'muted' }, 'Click any picture to enlarge it. Use the arrow keys to move through them. Underlined abbreviations in captions show their meaning when you hover or tap.'),
     area,
-    h('details', { class: 'box', open: FIGS.length ? null : true },
-      h('summary', { style: 'cursor:pointer;font-weight:700' }, FIGS.length ? 'Load or replace visuals packs' : 'Load the visuals packs'),
-      h('p', { class: 'muted' }, 'Choose all the .tvpack files at once. Each picture is encrypted with its own key before it is stored, the same as your PDFs. Uploading a pack again replaces its pictures.'),
-      h('div', { class: 'row' }, files, go), msg,
-      FIGS.length ? h('div', { class: 'row' }, confirmIn, del) : null),
+    FIGS.length ? uploader : null,
   ];
 };
 
@@ -670,7 +821,8 @@ async function render() {
   const name = (location.hash.replace(/^#\//, '') || 'dashboard').split('?')[0];
   const fn = VIEWS[name] || VIEWS.dashboard;
   document.querySelectorAll('#tabs a').forEach((a) => {
-    if (a.getAttribute('href') === `#/${name}`) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+    const tab = name === 'lesson' ? 'plan' : name;
+    if (a.getAttribute('href') === `#/${tab}`) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   });
   try {
     const nodes = await fn();

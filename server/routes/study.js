@@ -7,6 +7,7 @@ import { schedule, GRADES } from '../srs.js';
 import { DOC_NAMES } from '../seed/content.js';
 import { SOURCES, SOURCE_GROUPS } from '../seed/sources.js';
 import { GLOSSARY } from '../seed/glossary.js';
+import { LESSONS } from '../seed/lessons.js';
 
 export const study = express.Router();
 
@@ -27,6 +28,11 @@ async function newSeenToday() {
 study.get('/meta', (req, res) => {
   res.json({ docs: DOC_NAMES, sources: SOURCES, sourceGroups: SOURCE_GROUPS, email: req.cfEmail,
     timeZone: config.timeZone, newPerDay: config.newCardsPerDay });
+});
+
+study.get('/lessons', (req, res) => {
+  res.set('Cache-Control', 'private, max-age=600');
+  res.json(LESSONS);
 });
 
 study.get('/glossary', (req, res) => {
