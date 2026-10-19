@@ -1144,6 +1144,7 @@ VIEWS.issue = async () => {
   const fill = (x) => { symptom.value = x.symptom || ''; site.value = x.site || 'Not sure'; if (site.value === '') site.value = 'Not sure'; when.value = x.when || ''; tried.value = x.tried || ''; };
   if (ISSUE.input) fill(ISSUE.input);
   const fromBadge = h('div', { class: 'frominbox', hidden: true });
+  let formBox = null;
   const out = h('div', { class: 'issueout' });
   const status = h('span', { class: 'muted' });
   const btn = h('button', { class: 'btn primary', type: 'button' }, 'Build my plan ▶');
@@ -1274,6 +1275,8 @@ VIEWS.issue = async () => {
   auto.addEventListener('change', async () => { try { await api('/api/inbox/settings', { method: 'POST', body: { autoplan: auto.checked } }); } catch (e) { inboxHead.textContent = e.message; } });
   const stLabel = { triaging: 'Reading…', new: 'New', planned: 'Plan ready', opened: 'Opened', done: 'Done', 'not-an-issue': 'Not an issue', error: 'Error' };
   async function openItem(it) {
+    inboxList.querySelectorAll('.inboxitem').forEach((x) => x.classList.toggle('sel', x.dataset.id === it.id));
+    ISSUE.selected = it.id;
     const t = it.triage || {};
     fill({ symptom: t.symptom || it.text, site: t.site, when: t.when, tried: t.tried });
     ISSUE.input = { symptom: symptom.value, site: site.value, when: when.value, tried: tried.value, inboxId: it.id, glpi: t.glpi_ticket };
@@ -1294,7 +1297,7 @@ VIEWS.issue = async () => {
     inboxList.replaceChildren(...items.map((it) => {
       const t = it.triage || {};
       const pr = { High: 'bad', Medium: 'warn', Low: 'good' }[it.priority] || '';
-      return h('div', { class: `inboxitem st-${it.status}` },
+      return h('div', { class: `inboxitem st-${it.status}${ISSUE.selected === it.id ? ' sel' : ''}`, 'data-id': it.id },
         h('button', { class: 'inboxopen', type: 'button', onclick: () => openItem(it), disabled: it.status === 'triaging' },
           h('div', { class: 'row' }, h('span', { class: 'pill' }, stLabel[it.status] || it.status), it.priority ? h('span', { class: `pill ${pr}` }, it.priority) : null,
             t.site && t.site !== 'Not sure' ? h('span', { class: 'pill' }, t.site) : null, h('span', { class: 'muted' }, fmtDate(it.received_at))),
@@ -1339,14 +1342,22 @@ VIEWS.issue = async () => {
     h('div', {}, h('div', { class: 'label' }, `Issue helper · ${st.usedToday}/${st.dailyLimit} AI requests today`), h('h1', {}, 'Fix an issue')),
     setup,
     st.enabled && st.pack ? h('div', { class: 'issuegrid' },
-      h('div', { class: 'issueleft' }, inboxPanel, h('div', { class: 'box' },
+      h('div', { class: 'issueleft' }, inboxPanel, formBox = h('div', { class: 'box' },
         fromBadge,
         h('label', { class: 'field', for: 'isSym' }, 'What is the problem?', symptom),
         h('div', { class: 'chips' }, examples.map(([t, v]) => h('button', { class: 'chip', type: 'button', onclick: () => { symptom.value = v; } }, t))),
         h('label', { class: 'field', for: 'isSite' }, 'Where', site),
         h('label', { class: 'field', for: 'isWhen' }, 'Since when', when),
         h('label', { class: 'field', for: 'isTried' }, 'Already tried', tried),
-        h('div', { class: 'row' }, btn, status, h('button', { class: 'btn', type: 'button', onclick: () => { ISSUE.input = null; ISSUE.last = null; fill({}); fromBadge.hidden = true; status.textContent = ''; drawPlan(); } }, 'Clear')),
+        h('div', { class: 'row' }, btn, status, h('button', { class: 'btn', type: 'button', title: 'Empty the form and the plan to start a new issue', onclick: () => {
+          const had = Boolean(ISSUE.last || symptom.value.trim() || when.value || tried.value);
+          ISSUE.input = null; ISSUE.last = null; ISSUE.selected = null; fill({}); fromBadge.hidden = true; drawPlan();
+          inboxList.querySelectorAll('.inboxitem.sel').forEach((x) => x.classList.remove('sel'));
+          formBox.classList.remove('flash'); void formBox.offsetWidth; formBox.classList.add('flash');
+          status.textContent = had ? 'Cleared. Ready for a new issue.' : 'Already empty. Type a new issue or pick one from the inbox.';
+          setTimeout(() => { if (status.textContent.startsWith('Cleared') || status.textContent.startsWith('Already')) status.textContent = ''; }, 4000);
+          formBox.scrollIntoView({ behavior: 'smooth', block: 'start' }); symptom.focus({ preventScroll: true });
+        } }, 'Clear')),
         h('p', { class: 'muted' }, 'You get: classification, evidence checklist, ordered steps with the matching screenshots, where to look on the network, when and how to escalate, and a GLPI ticket draft. Everything is cited from your documents.'))),
       out) : null,
   ];

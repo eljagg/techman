@@ -287,3 +287,7 @@ abbr.gl{text-decoration:underline dotted;text-underline-offset:3px;cursor:help}
 .worktop .inboxmini{display:flex;flex-direction:column;gap:6px;margin:6px 0}
 .worktop .inboxmini a{display:block;text-decoration:none;color:inherit;border:1px solid var(--line);border-radius:8px;padding:6px 10px}
 .worktop .inboxmini a:hover{border-color:var(--accent)}
+
+.inboxitem.sel{outline:2px solid var(--accent);outline-offset:1px;background:color-mix(in srgb,var(--accent) 8%,transparent)}
+@keyframes flashbox{0%{box-shadow:0 0 0 3px var(--accent)}100%{box-shadow:0 0 0 0 transparent}}
+.box.flash{animation:flashbox .9s ease-out}
