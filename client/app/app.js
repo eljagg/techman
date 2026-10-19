@@ -1152,9 +1152,10 @@ VIEWS.issue = async () => {
     out.replaceChildren(h('div', { class: 'aianswer', style: 'display:flex;flex-direction:column;gap:14px' },
       h('div', { class: 'box' },
         h('div', { class: 'label' }, 'Summary'), h('p', { style: 'font-size:17px' }, ...aiInline(p.summary, cites)),
-        h('div', { class: 'row' }, h('span', { class: 'pill' }, c.type), h('span', { class: 'pill' }, c.error_class),
-          h('span', { class: `pill ${sev[c.severity] || ''}` }, `Severity: ${c.severity}`), h('span', { class: 'pill' }, `Category: ${c.category_prefix}-…`),
-          h('span', { class: 'pill' }, `Confidence: ${p.confidence}`)),
+        h('div', { class: 'row' }, c.type ? h('span', { class: 'pill' }, c.type) : null, c.error_class ? h('span', { class: 'pill' }, c.error_class) : null,
+          c.severity ? h('span', { class: `pill ${sev[c.severity] || ''}` }, `Severity: ${c.severity}`) : null, c.category_prefix ? h('span', { class: 'pill' }, `Category: ${c.category_prefix}-…`) : null,
+          p.confidence ? h('span', { class: 'pill' }, `Confidence: ${p.confidence}`) : null),
+        p.incomplete?.length ? h('p', { class: 'error' }, `The AI left out: ${p.incomplete.join(', ')}. Click "Build my plan" again for a complete plan.`) : null,
         c.components?.length ? h('div', { class: 'dflow comp' }, c.components.flatMap((x, i) => [i ? h('div', { class: 'darrow' }, '→') : null, h('div', { class: 'dnode tone-blue' }, h('strong', {}, ...txt(x)))])) : null,
         c.why ? h('p', { class: 'muted' }, ...aiInline(c.why, cites)) : null),
       pathBox(r),
@@ -1162,16 +1163,16 @@ VIEWS.issue = async () => {
         p.ask_first?.length ? h('div', { class: 'box' }, h('h3', {}, 'Ask the client first'), h('ul', {}, p.ask_first.map((x) => h('li', {}, ...aiInline(x, cites))))) : null,
         p.evidence?.length ? h('div', { class: 'box' }, h('h3', {}, 'Collect this evidence'),
           h('ul', { class: 'checklist' }, p.evidence.map((x, i) => h('li', {}, h('label', {}, h('input', { type: 'checkbox', id: `ev${i}` }), ' ', h('strong', {}, ...txt(x.item)), ' — ', ...aiInline(x.how, cites)))))) : null),
-      h('div', { class: 'box' }, h('h2', {}, 'Steps'),
+      !(p.steps || []).length ? null : h('div', { class: 'box' }, h('h2', {}, 'Steps'),
         h('ol', { class: 'issuesteps' }, (p.steps || []).map((s) => h('li', { class: s.caution ? 'caution' : '' },
           h('h3', {}, s.caution ? '⚠ ' : '', ...txt(s.title)),
           ...aiText(s.detail, cites),
           (s.cites || []).length ? h('div', { class: 'row' }, h('span', { class: 'muted' }, 'From: '), ...aiInline(`[${s.cites.join(',')}]`, cites)) : null,
           aiFigs(s.pictures, 'Screen for this step'))))),
       h('div', { class: 'grid' },
-        h('div', { class: 'box' }, h('h3', {}, `Escalation: ${p.escalation?.to || ''}`), h('p', {}, ...aiInline(p.escalation?.needed_if || '', cites)),
+        !p.escalation?.to ? null : h('div', { class: 'box' }, h('h3', {}, `Escalation: ${p.escalation?.to || ''}`), h('p', {}, ...aiInline(p.escalation?.needed_if || '', cites)),
           h('ul', {}, (p.escalation?.checklist || []).map((x) => h('li', {}, ...aiInline(x, cites))))),
-        h('div', { class: 'box' }, h('h3', {}, 'GLPI ticket draft'),
+        !p.ticket?.title ? null : h('div', { class: 'box' }, h('h3', {}, 'GLPI ticket draft'),
           h('label', { class: 'field' }, 'Title', h('input', { type: 'text', value: p.ticket?.title || '', id: 'tkTitle' })),
           h('label', { class: 'field' }, 'Description', h('textarea', { rows: 9, id: 'tkDesc' }, p.ticket?.description || '')),
           h('div', { class: 'row' }, copyBtn(() => document.getElementById('tkTitle').value, 'Copy title'), copyBtn(() => document.getElementById('tkDesc').value, 'Copy description')),
@@ -1235,7 +1236,7 @@ VIEWS.issue = async () => {
     const t = it.triage || {};
     fill({ symptom: t.symptom || it.text, site: t.site, when: t.when, tried: t.tried });
     ISSUE.input = { symptom: symptom.value, site: site.value, when: when.value, tried: tried.value, inboxId: it.id, glpi: t.glpi_ticket };
-    fromBadge.hidden = false;
+    fromBadge.hidden = false; status.textContent = '';
     fromBadge.replaceChildren(h('strong', {}, '📥 From the inbox: '), it.subject || '(no subject)', ` — ${it.from || ''}`, t.glpi_ticket ? h('span', { class: 'pill' }, `GLPI ${t.glpi_ticket}`) : null,
       h('details', {}, h('summary', { class: 'muted' }, 'Original message'), h('pre', { class: 'origmsg' }, it.text)));
     if (it.plan) { ISSUE.last = { ...it.plan, input: { ...ISSUE.input } }; drawPlan(); } else { ISSUE.last = null; out.replaceChildren(); }
@@ -1257,9 +1258,10 @@ VIEWS.issue = async () => {
           h('div', { class: 'row' }, h('span', { class: 'pill' }, stLabel[it.status] || it.status), it.priority ? h('span', { class: `pill ${pr}` }, it.priority) : null,
             t.site && t.site !== 'Not sure' ? h('span', { class: 'pill' }, t.site) : null, h('span', { class: 'muted' }, fmtDate(it.received_at))),
           h('strong', {}, t.title || it.subject || '(no subject)'), h('div', { class: 'muted' }, it.from || (it.source === 'pasted' ? 'Pasted' : '')),
-          it.error ? h('div', { class: 'error' }, it.error) : null),
+          it.error ? h('div', { class: 'error' }, it.error) : null,
+          it.status === 'planned' ? h('div', { class: 'ok' }, 'Plan ready — click to open it ▶') : null),
         h('div', { class: 'row' },
-          ['error', 'new', 'not-an-issue', 'opened'].includes(it.status) ? h('button', { class: 'btn', type: 'button', onclick: async () => { await api(`/api/inbox/${it.id}/retry`, { method: 'POST' }).catch(() => {}); setTimeout(refreshInbox, 800); } }, it.status === 'error' ? 'Retry' : 'Re-read') : null,
+          ['error', 'new', 'not-an-issue', 'opened', 'planned'].includes(it.status) ? h('button', { class: 'btn', type: 'button', onclick: async () => { await api(`/api/inbox/${it.id}/retry`, { method: 'POST' }).catch(() => {}); setTimeout(refreshInbox, 800); } }, it.status === 'error' ? 'Retry' : 'Re-read') : null,
           h('button', { class: 'btn', type: 'button', onclick: async () => { await api(`/api/inbox/${it.id}/status`, { method: 'POST', body: { status: 'archived' } }).catch(() => {}); refreshInbox(); } }, 'Archive')));
     }));
     updateInboxBadge();

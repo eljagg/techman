@@ -32,6 +32,7 @@ async function getItem(id) {
 async function process(id) {
   const it = await getItem(id); if (!it) return;
   const d = it.data;
+  delete d.error; delete d.plan; // a re-read starts clean
   try {
     if (!aiEnabled()) { await saveItem(id, it.row.source, d, 'new'); return; }
     d.triage = await triageText({ from: d.from, subject: d.subject, text: d.text });

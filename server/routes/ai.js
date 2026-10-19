@@ -201,6 +201,18 @@ const ISSUE_TOOL = {
   },
 };
 
+// Which important parts of a plan are missing or empty.
+function planGaps(p) {
+  if (!p) return ['the whole plan'];
+  const out = [];
+  const c = p.classification || {};
+  if (!c.type || !c.error_class || !c.severity) out.push('classification');
+  if (!Array.isArray(p.steps) || !p.steps.length || p.steps.some((x) => !x?.title)) out.push('steps');
+  if (!p.escalation?.to) out.push('escalation');
+  if (!p.ticket?.title || !p.ticket?.description) out.push('ticket');
+  if (!p.summary) out.push('summary');
+  return out;
+}
 const TOPO = NODES.map((n) => `${n.role}${n.site !== 'CENTRAL' && n.site !== 'JCF' ? ' @' + n.site : ''}: ${n.name} ${n.ip} — ${n.desc}`).join('\n');
 export async function buildIssuePlan(body, ip) {
     needKnowledge();
@@ -209,13 +221,26 @@ export async function buildIssuePlan(body, ip) {
     const site = str(body.site, 80), when = str(body.when, 120), tried = str(body.tried, 1500);
     await allow();
     const ctx = context(`${symptom} ${site} ${tried}`, { k: 12, figs: 10 });
-    const r = await claude({
+    const req1 = {
       system: system('Fill in the issue_plan tool. Steps must be concrete, in the order a level 2 engineer would do them, each grounded in SOURCES with cites. Include the GLPI documentation steps (take ownership, tasks with time, approvals before remote access, escalation through ClienteConsulta nuevo) where they apply. Prefer pictures that show the exact screen for a step.'),
       messages: [{ role: 'user', content: `JCF TOPOLOGY (for suspect_parts):\n${TOPO}\n\nSOURCES:\n${ctx.src || '(none found)'}\n\nPICTURES:\n${ctx.pic || '(none)'}\n\nISSUE REPORTED: ${symptom}\nSITE: ${site || 'not given'}\nWHEN: ${when || 'not given'}\nALREADY TRIED: ${tried || 'nothing yet'}` }],
-      tools: [ISSUE_TOOL], tool_choice: { type: 'tool', name: 'issue_plan' }, max_tokens: 4000,
-    });
-    const plan = toolInput(r, 'issue_plan');
+      tools: [ISSUE_TOOL], tool_choice: { type: 'tool', name: 'issue_plan' }, max_tokens: 10000,
+    };
+    let r = await claude(req1);
+    let plan = toolInput(r, 'issue_plan');
+    let missing = planGaps(plan);
+    if (missing.length) {
+      // Without a forced tool some models skip parts of the plan, or run out of room. Ask once more for the whole plan.
+      console.log(`issue_plan incomplete (stop: ${r.stop_reason}); missing ${missing.join(', ')}. Asking again.`);
+      const used = r.usage;
+      r = await claude({ ...req1, messages: [...req1.messages, { role: 'assistant', content: 'I will now call issue_plan with every field filled in.' },
+        { role: 'user', content: `Call issue_plan with ALL fields filled in. Your last plan was missing: ${missing.join(', ')}. Keep each field short so the whole plan fits; steps must have at least 3 entries.` }] });
+      r.usage = { ...r.usage, input_tokens: (r.usage?.input_tokens || 0) + (used?.input_tokens || 0), output_tokens: (r.usage?.output_tokens || 0) + (used?.output_tokens || 0) };
+      const p2 = toolInput(r, 'issue_plan');
+      if (p2 && planGaps(p2).length <= missing.length) { plan = p2; missing = planGaps(p2); }
+    }
     if (!plan) throw bad('The AI did not return a plan. Try again.', 502);
+    plan.incomplete = missing;
     for (const s of plan.steps || []) s.pictures = pickFigs((s.pictures || []).map((k) => String(k).replace(/^F:/, '')), []);
     const code = siteCode(site);
     const path = pathFor(code).map((n) => n.id);
