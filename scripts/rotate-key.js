@@ -22,7 +22,7 @@ const pool = new pg.Pool({
 const client = await pool.connect();
 try {
   await client.query('BEGIN');
-  for (const table of ['documents', 'figures', 'kb_pack']) {
+  for (const table of ['documents', 'figures', 'kb_pack', 'notes', 'inbox_items']) {
     const exists = await client.query(`SELECT to_regclass($1) AS t`, [table]);
     if (!exists.rows[0].t) continue;
     const { rows } = await client.query(`SELECT id, wrap_iv, wrap_tag, wrapped_key, key_id FROM ${table} FOR UPDATE`);

@@ -128,6 +128,35 @@ CREATE TABLE IF NOT EXISTS figures (
 );
 CREATE INDEX IF NOT EXISTS figures_doc ON figures (doc, ord);
 ALTER TABLE plan_sessions ADD COLUMN IF NOT EXISTS figs JSONB NOT NULL DEFAULT '[]';
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS src TEXT;
+CREATE TABLE IF NOT EXISTS notes (
+  id          UUID PRIMARY KEY,
+  kind        TEXT NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  iv          BYTEA NOT NULL,
+  tag         BYTEA NOT NULL,
+  ciphertext  BYTEA NOT NULL,
+  wrap_iv     BYTEA NOT NULL,
+  wrap_tag    BYTEA NOT NULL,
+  wrapped_key BYTEA NOT NULL,
+  key_id      TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS inbox_items (
+  id          UUID PRIMARY KEY,
+  received_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  source      TEXT NOT NULL,
+  status      TEXT NOT NULL DEFAULT 'new',
+  site        TEXT,
+  priority    TEXT,
+  iv          BYTEA NOT NULL,
+  tag         BYTEA NOT NULL,
+  ciphertext  BYTEA NOT NULL,
+  wrap_iv     BYTEA NOT NULL,
+  wrap_tag    BYTEA NOT NULL,
+  wrapped_key BYTEA NOT NULL,
+  key_id      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS inbox_received ON inbox_items (received_at DESC);
 CREATE TABLE IF NOT EXISTS kb_pack (
   id          UUID PRIMARY KEY,
   name        TEXT UNIQUE NOT NULL,

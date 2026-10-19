@@ -49,17 +49,26 @@ function bm25(docs) {
   };
 }
 
-let CHUNKS = [], chunkSearch = null, FIGMETA = [], figSearch = null;
-export const kbStatus = () => ({ chunks: CHUNKS.length, figures: FIGMETA.length });
+let PACK = [], NOTES = [], CHUNKS = [], chunkSearch = null, FIGMETA = [], figSearch = null;
+export const kbStatus = () => ({ chunks: PACK.length, notes: NOTES.length, figures: FIGMETA.length });
+function rebuild() {
+  CHUNKS = [...PACK, ...NOTES];
+  chunkSearch = CHUNKS.length ? bm25(CHUNKS.map((c) => `${c.title} ${c.title} ${c.text}`)) : null;
+}
+// Your saved notes and fixes are searched together with the documents (source code "MY").
+export function setNotes(list) {
+  NOTES = list.map((n) => ({ id: `MY-${n.id}`, doc: 'MY', loc: n.date, title: n.title, text: n.text }));
+  rebuild();
+}
 
 export async function loadKnowledge() {
   const { rows: [row] } = await q(`SELECT * FROM kb_pack WHERE name = 'knowledge'`);
-  if (!row) { CHUNKS = []; chunkSearch = null; return 0; }
+  if (!row) { PACK = []; rebuild(); return 0; }
   const raw = decryptDocument(config.fileMasterKey, row);
   const pack = JSON.parse(zlib.gunzipSync(raw, { maxOutputLength: 50 * 1024 * 1024 }).toString('utf8'));
-  CHUNKS = pack.chunks.filter((c) => SOURCES[c.doc]);
-  chunkSearch = bm25(CHUNKS.map((c) => `${c.title} ${c.title} ${c.text}`));
-  return CHUNKS.length;
+  PACK = pack.chunks.filter((c) => SOURCES[c.doc]);
+  rebuild();
+  return PACK.length;
 }
 
 export async function loadFigureIndex() {

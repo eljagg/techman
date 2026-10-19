@@ -53,6 +53,11 @@ export const config = {
     model: (env.AI_MODEL || 'claude-sonnet-5-5').trim(),
     baseUrl: (env.AI_BASE_URL || 'https://api.anthropic.com').trim().replace(/\/$/, ''),
     dailyLimit: Number(env.AI_DAILY_LIMIT || 150),
+    triageModel: (env.AI_TRIAGE_MODEL || 'claude-haiku-5-5').trim(),
+  },
+  inbox: {
+    secret: (env.INBOX_SECRET || '').trim(),
+    allowedFrom: (env.INBOX_ALLOWED_FROM || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
   },
   timeZone: env.APP_TIME_ZONE || 'America/Jamaica',
 };

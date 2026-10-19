@@ -3,9 +3,9 @@ import { config } from '../config.js';
 
 export const aiEnabled = () => Boolean(config.ai.key);
 
-export async function claude({ system, messages, tools, tool_choice, max_tokens = 1600 }) {
+export async function claude({ system, messages, tools, tool_choice, max_tokens = 1600, model = null }) {
   if (!aiEnabled()) { const e = new Error('AI is not configured. Add ANTHROPIC_API_KEY in Railway.'); e.status = 503; throw e; }
-  const body = { model: config.ai.model, max_tokens, system, messages };
+  const body = { model: model || config.ai.model, max_tokens, system, messages };
   if (tools) { body.tools = tools; if (tool_choice) body.tool_choice = tool_choice; }
   let res;
   try {

@@ -44,7 +44,9 @@ Limits to be aware of:
 | `CF_ACCESS_AUD` | the Application Audience (AUD) tag of the Access application |
 | `ALLOWED_EMAIL` | the one email allowed by your Access policy |
 
-AI (optional): `ANTHROPIC_API_KEY` (switches AI on), `AI_MODEL` (claude-sonnet-5-5), `AI_DAILY_LIMIT` (150 requests per day).
+AI (optional): `ANTHROPIC_API_KEY` (switches AI on), `AI_MODEL` (claude-sonnet-5-5), `AI_TRIAGE_MODEL` (claude-haiku-5-5, reads inbox emails), `AI_DAILY_LIMIT` (150 requests per day).
+
+Issue inbox (optional, see `cloudflare/inbox-worker/README.md`): `INBOX_SECRET` (shared with the Cloudflare Email Worker), `INBOX_ALLOWED_FROM` (comma-separated addresses or `@domains` allowed to send).
 
 Optional: `SESSION_HOURS` (12), `SESSION_IDLE_MINUTES` (120), `NEW_CARDS_PER_DAY` (15), `MAX_UPLOAD_MB` (30), `MAX_PACK_MB` (40), `APP_TIME_ZONE` (America/Jamaica).
 
@@ -100,6 +102,11 @@ Sign in → Documents → upload each Spanish original and each English translat
 - **Ask about this picture** in the viewer, **AI quiz** from any document, and **Explain with AI** after a wrong quiz answer.
 - The document text comes from `techman-knowledge.tkpack`, uploaded once on the Ask AI page. It is encrypted at rest like the PDFs and decrypted into memory when the server starts. Lines containing passwords were removed before the pack was built.
 - The server finds the relevant passages first (BM25 search, no external service), then sends only those passages (and, for picture questions, that one picture) to the Claude API. The key never reaches the browser. Every call is in the audit log; `AI_DAILY_LIMIT` caps daily use and a burst limit allows 12 calls per minute.
+- AI requests run as background jobs: the page starts the job and checks on it every 2 seconds, so a slow answer can no longer hit a proxy timeout (the old "Request failed (502)"). **Test AI connection** on the Ask AI page checks the key and model.
+- **Where to look**: each plan shows the path from the site to the central servers (from the Remote Sites Guide), with the suspect parts in red, and **Export to nettm (CSV)** for those devices (no usernames or passwords).
+- **My notes**: save AI answers, plans and real fixes ("When it is solved → Save the fix"). Notes are encrypted and the AI searches them together with the documents, cited as "My notes and fixes".
+- **Issue inbox**: emails to your inbox address (Cloudflare Email Worker), or text / `.eml` files you paste, are read by Claude Haiku (problem in English, site, since when, what was tried, GLPI number, priority). Click one and the form fills itself. Optional automatic plan. Email content is treated as data, never as instructions.
+- **Open page N** on a citation appears once that PDF is uploaded and linked to its source on the Documents page ("Is:" list).
 
 ## 7. Day-to-day
 - **Today** shows what is due, new cards left for the day, plan progress, quiz accuracy and your weakest sections.

@@ -7,6 +7,7 @@ import crypto from 'node:crypto';
 import { q, audit } from '../db.js';
 import { config } from '../config.js';
 import { encryptDocument, decryptDocument, sha256Hex } from '../crypto.js';
+import { SOURCES } from '../seed/sources.js';
 
 export const documents = express.Router();
 
@@ -20,7 +21,7 @@ const clean = (s, max) => String(s ?? '').trim().slice(0, max);
 documents.get('/', async (req, res, next) => {
   try {
     const { rows } = await q(
-      `SELECT id, title, code, language, filename, size_bytes, sha256, key_id, created_at
+      `SELECT id, title, code, language, src, filename, size_bytes, sha256, key_id, created_at
        FROM documents ORDER BY code NULLS LAST, language, created_at`);
     res.json(rows);
   } catch (e) { next(e); }
@@ -41,6 +42,7 @@ documents.post('/', (req, res, next) => {
       const title = clean(req.body?.title, 200);
       const code = clean(req.body?.code, 60) || null;
       const language = ['en', 'es'].includes(req.body?.language) ? req.body.language : null;
+      const src = SOURCES[req.body?.src] ? req.body.src : null;
       if (!title || !language) return res.status(400).json({ error: 'Give the document a title and choose its language.' });
 
       const id = crypto.randomUUID();
@@ -48,10 +50,10 @@ documents.post('/', (req, res, next) => {
       const filename = clean(f.originalname, 200).replace(/[^\w.\- ]+/g, '_') || 'document.pdf';
       await q(
         `INSERT INTO documents (id, title, code, language, filename, size_bytes, sha256, iv, tag, ciphertext,
-           wrap_iv, wrap_tag, wrapped_key, key_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+           wrap_iv, wrap_tag, wrapped_key, key_id, src)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
         [id, title, code, language, filename, f.size, sha256Hex(f.buffer), enc.iv, enc.tag, enc.ciphertext,
-          enc.wrapIv, enc.wrapTag, enc.wrappedKey, enc.keyId]
+          enc.wrapIv, enc.wrapTag, enc.wrappedKey, enc.keyId, src]
       );
       f.buffer.fill(0);
       await audit('doc_upload', `${title} (${language})`, req.clientIp);
@@ -83,6 +85,16 @@ documents.get('/:id/view', async (req, res, next) => {
       'X-Content-Type-Options': 'nosniff',
     });
     res.send(plain);
+  } catch (e) { next(e); }
+});
+
+// Link an uploaded PDF to one of the source documents, so AI citations can open it at the right page.
+documents.post('/:id/source', async (req, res, next) => {
+  try {
+    if (!/^[0-9a-f-]{36}$/.test(req.params.id)) return res.status(404).json({ error: 'Not found.' });
+    const src = SOURCES[req.body?.src] ? req.body.src : null;
+    await q(`UPDATE documents SET src = $2 WHERE id = $1`, [req.params.id, src]);
+    res.json({ ok: true });
   } catch (e) { next(e); }
 });
 

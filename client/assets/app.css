@@ -160,7 +160,7 @@ dialog.viewer.noinfo .vinfo{display:none}
 .chip{font:inherit;font-size:13px;border:1px solid var(--line);background:var(--bg);color:var(--fg);border-radius:999px;padding:5px 12px;cursor:pointer}
 .chip:hover{border-color:var(--accent)}
 .issuegrid{display:grid;grid-template-columns:minmax(300px,420px) minmax(0,1fr);gap:18px;align-items:start}
-.issuegrid > .box:first-child{position:sticky;top:80px}
+.issueleft{display:flex;flex-direction:column;gap:14px;min-width:0}
 .issueout:empty::before{content:"Your plan will appear here.";color:var(--muted)}
 .issuesteps{margin:0;padding-left:0;list-style:none;counter-reset:st;display:flex;flex-direction:column;gap:12px}
 .issuesteps > li{counter-increment:st;border:1px solid var(--line);border-radius:8px;padding:12px 14px 12px 52px;position:relative;display:flex;flex-direction:column;gap:6px}
@@ -171,7 +171,7 @@ dialog.viewer.noinfo .vinfo{display:none}
 .vask{display:flex;flex-direction:column;gap:6px;border-top:1px solid #26333f;padding-top:10px}
 .vask textarea{background:#0b1015;color:#e4ebf0;border-color:#2a3946}
 .coachbox{border-left:4px solid var(--accent);padding:8px 12px;background:var(--accent-soft);border-radius:6px}
-@media (max-width:900px){.issuegrid{grid-template-columns:1fr}.issuegrid > .box:first-child{position:static}}
+@media (max-width:900px){.issuegrid{grid-template-columns:1fr}}
 /* lessons */
 .sess.next{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
 .uploadfirst{border:2px solid var(--accent)}
@@ -244,3 +244,22 @@ abbr.gl{text-decoration:underline dotted;text-underline-offset:3px;cursor:help}
 @media (max-width:720px){.tabs{order:3;flex-basis:100%}.brand{flex:1}}
 @media (max-width:520px){.grades{grid-template-columns:repeat(2,1fr)}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+
+/* issue inbox */
+.inboxlist{display:flex;flex-direction:column;gap:8px;max-height:420px;overflow:auto}
+.inboxitem{border:1px solid var(--line);border-radius:10px;padding:8px;display:flex;flex-direction:column;gap:6px}
+.inboxitem.st-new,.inboxitem.st-planned{border-left:4px solid var(--accent)}
+.inboxitem.st-not-an-issue{opacity:.65}
+.inboxopen{all:unset;cursor:pointer;display:flex;flex-direction:column;gap:4px}
+.inboxopen:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.inboxopen[disabled]{cursor:progress;opacity:.7}
+.frominbox{border:1px dashed var(--accent);border-radius:8px;padding:8px 10px;margin-bottom:10px;font-size:14px}
+.origmsg{white-space:pre-wrap;max-height:260px;overflow:auto;font-size:12.5px;background:var(--bg);padding:8px;border-radius:6px}
+.navbadge{display:inline-block;min-width:18px;padding:0 5px;margin-left:5px;border-radius:999px;background:#c62828;color:#fff;font-size:11px;font-weight:700;line-height:18px;text-align:center}
+/* network path */
+.ppath{display:flex;flex-wrap:wrap;align-items:stretch;gap:6px}
+.pnode{flex:0 1 150px;display:flex;flex-direction:column;gap:2px;padding:8px 10px;border-radius:8px;border:2px solid var(--line);font-size:13px;background:var(--bg)}
+.pnode .ptype{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+.pnode.suspect{border-color:#c62828;background:color-mix(in srgb,#c62828 10%,var(--bg))}
+.pnode .ptag{color:#c62828;font-weight:700;font-size:12px}
+.notelist{display:flex;flex-direction:column;gap:12px}

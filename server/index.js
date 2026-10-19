@@ -1,6 +1,8 @@
 import express from 'express';
 import helmet from 'helmet';
 import path from 'node:path';
+import fs from 'node:fs';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { config } from './config.js';
 import { pool, migrateAndSeed } from './db.js';
@@ -10,9 +12,18 @@ import { study } from './routes/study.js';
 import { documents } from './routes/documents.js';
 import { figures } from './routes/figures.js';
 import { ai, initAi } from './routes/ai.js';
+import { notes } from './routes/notes.js';
+import { inbox, inboxHook } from './routes/inbox.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const clientDir = path.join(here, '..', 'client');
+
+// Each release gets new asset URLs (?v=<content hash>), so browsers never keep an old
+// stylesheet or script after a deploy.
+const hashOf = (f) => crypto.createHash('sha256').update(fs.readFileSync(path.join(clientDir, f))).digest('hex').slice(0, 10);
+const VERSIONED = ['assets/app.css', 'assets/login.js', 'app/app.js'].map((f) => [`/${f}`, `/${f}?v=${hashOf(f)}`]);
+const page = (f) => VERSIONED.reduce((html, [a, b]) => html.replaceAll(`"${a}"`, `"${b}"`), fs.readFileSync(path.join(clientDir, f), 'utf8'));
+const LOGIN_HTML = page('login.html'), APP_HTML = page('app/index.html');
 
 const app = express();
 app.disable('x-powered-by');
@@ -48,20 +59,23 @@ app.use((req, res, next) => {
 // Railway health check: no data, no auth.
 app.get('/healthz', (req, res) => res.type('text').send('ok'));
 app.get('/favicon.ico', (req, res) => res.status(204).end());
+// Email Worker webhook: signed with INBOX_SECRET (HMAC), so it does not use Cloudflare Access.
+app.use('/hook/inbox', inboxHook);
 
 // Layer 1: every other request must carry a valid Cloudflare Access token.
 app.use(cfAccess());
-app.use(express.json({ limit: '100kb' }));
+const jsonSmall = express.json({ limit: '100kb' }), jsonLarge = express.json({ limit: '4mb' });
+app.use((req, res, next) => (req.path === '/api/inbox/import' ? jsonLarge : jsonSmall)(req, res, next));
 app.use(csrfGuard());
 
 // Public within Access: login page and its assets.
-app.use('/assets', express.static(path.join(clientDir, 'assets'), { index: false, maxAge: '1h' }));
+app.use('/assets', express.static(path.join(clientDir, 'assets'), { index: false, maxAge: '30d', immutable: true }));
 app.get('/robots.txt', (req, res) => res.type('text').send('User-agent: *\nDisallow: /\n'));
 app.get('/login', async (req, res, next) => {
   try {
     if (await hasSession(req)) return res.redirect(302, '/');
     res.set('Cache-Control', 'no-store');
-    res.sendFile(path.join(clientDir, 'login.html'));
+    res.type('html').send(LOGIN_HTML);
   } catch (e) { next(e); }
 });
 app.post('/api/login', loginHandler);
@@ -74,9 +88,11 @@ app.post('/api/logout-all', logoutEverywhere);
 app.use('/api/documents', documents);
 app.use('/api/figures', figures);
 app.use('/api/ai', ai);
+app.use('/api/notes', notes);
+app.use('/api/inbox', inbox);
 app.use('/api', study);
-app.use('/app', express.static(path.join(clientDir, 'app'), { index: false }));
-app.get('/', (req, res) => res.sendFile(path.join(clientDir, 'app', 'index.html')));
+app.use('/app', express.static(path.join(clientDir, 'app'), { index: false, maxAge: '30d', immutable: true }));
+app.get('/', (req, res) => res.type('html').send(APP_HTML));
 
 app.use((req, res) => {
   if (req.path.startsWith('/api/')) return res.status(404).json({ error: 'Not found.' });

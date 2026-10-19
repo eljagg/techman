@@ -6,6 +6,7 @@ export const SOURCE_GROUPS = [
   { name: 'JCF site documents', codes: ['RSG', 'SSP', 'AVR'] },
   { name: 'MBIS administrator training', codes: ['A0A', 'A0B', 'A0C', 'A0D', 'A1A', 'A1D', 'A2A', 'A3A', 'A3D', 'A4A', 'A5A', 'A5B', 'A5D', 'A6A', 'A6C', 'A6D', 'A7B', 'A7C', 'A7D', 'A8D', 'A9A', 'A9B', 'A9C'] },
   { name: 'Face Expert training', codes: ['F8A', 'F8B'] },
+  { name: 'Your notes', codes: ['MY'] },
 ];
 
 export const SOURCES = {
@@ -40,4 +41,5 @@ export const SOURCES = {
   A9C: 'Admin 9C – Administrative Tasks',
   F8A: 'Face Expert 8A – Operator Training',
   F8B: 'Face Expert 8B – Administration',
+  MY: 'My notes and fixes',
 };
