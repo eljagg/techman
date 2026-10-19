@@ -9,6 +9,7 @@ import { requireSession, csrfGuard, loginHandler, logoutHandler, logoutEverywher
 import { study } from './routes/study.js';
 import { documents } from './routes/documents.js';
 import { figures } from './routes/figures.js';
+import { ai, initAi } from './routes/ai.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const clientDir = path.join(here, '..', 'client');
@@ -72,6 +73,7 @@ app.post('/api/logout', logoutHandler);
 app.post('/api/logout-all', logoutEverywhere);
 app.use('/api/documents', documents);
 app.use('/api/figures', figures);
+app.use('/api/ai', ai);
 app.use('/api', study);
 app.use('/app', express.static(path.join(clientDir, 'app'), { index: false }));
 app.get('/', (req, res) => res.sendFile(path.join(clientDir, 'app', 'index.html')));
@@ -93,6 +95,7 @@ app.use((err, req, res, next) => {
 
 async function start() {
   await migrateAndSeed();
+  await initAi();
   const server = app.listen(config.port, () => {
     console.log(`techman listening on ${config.port} (${config.isProd ? 'production' : 'development'}; Cloudflare Access ${config.cf.disabled ? 'OFF' : 'required'})`);
   });

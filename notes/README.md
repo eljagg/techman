@@ -29,7 +29,7 @@ procedures. Node 22 + Express + Postgres on Railway, behind Cloudflare Access.
 Limits to be aware of:
 - Anyone who controls your Railway project can read both the variables and the database, and so could decrypt. Turn on two-factor sign-in for Railway, GitHub and Cloudflare.
 - If `FILE_MASTER_KEY` is lost, the documents cannot be recovered. Keep it in your password manager.
-- To change the master key, use `npm run rotate-key` (section 7). It re-wraps the keys of documents and pictures.
+- To change the master key, use `npm run rotate-key` (section 8). It re-wraps the keys of documents, pictures and the knowledge pack.
 
 ## 3. Variables (Railway → techman service → Variables)
 
@@ -43,6 +43,8 @@ Limits to be aware of:
 | `CF_ACCESS_TEAM_DOMAIN` | e.g. `yourteam.cloudflareaccess.com` |
 | `CF_ACCESS_AUD` | the Application Audience (AUD) tag of the Access application |
 | `ALLOWED_EMAIL` | the one email allowed by your Access policy |
+
+AI (optional): `ANTHROPIC_API_KEY` (switches AI on), `AI_MODEL` (claude-sonnet-5-5), `AI_DAILY_LIMIT` (150 requests per day).
 
 Optional: `SESSION_HOURS` (12), `SESSION_IDLE_MINUTES` (120), `NEW_CARDS_PER_DAY` (15), `MAX_UPLOAD_MB` (30), `MAX_PACK_MB` (40), `APP_TIME_ZONE` (America/Jamaica).
 
@@ -92,7 +94,14 @@ Sign in → Documents → upload each Spanish original and each English translat
 - Pictures are loaded from `.tvpack` files on the Visuals page. Each picture and its thumbnail is encrypted with its own data key, wrapped by `FILE_MASTER_KEY`, exactly like the PDFs. The packs are not stored in GitHub.
 - **Glossary** lists every abbreviation found in the documents. The same abbreviations are underlined on cards, quiz questions and plan items; hover or tap one to see its meaning.
 
-## 6. Day-to-day
+## 6. AI tutor and issue helper
+- **Ask AI**: questions answered only from your documents, with numbered citations and the matching pictures.
+- **Fix an issue**: describe a problem; get classification, evidence checklist, ordered steps with screenshots, escalation advice and a GLPI ticket draft.
+- **Ask about this picture** in the viewer, **AI quiz** from any document, and **Explain with AI** after a wrong quiz answer.
+- The document text comes from `techman-knowledge.tkpack`, uploaded once on the Ask AI page. It is encrypted at rest like the PDFs and decrypted into memory when the server starts. Lines containing passwords were removed before the pack was built.
+- The server finds the relevant passages first (BM25 search, no external service), then sends only those passages (and, for picture questions, that one picture) to the Claude API. The key never reaches the browser. Every call is in the audit log; `AI_DAILY_LIMIT` caps daily use and a burst limit allows 12 calls per minute.
+
+## 7. Day-to-day
 - **Today** shows what is due, new cards left for the day, plan progress, quiz accuracy and your weakest sections.
 - **Review** is spaced repetition: Again (10 min), Hard, Good, Easy. Gaps grow as you remember.
 - **Plan** is the 10-session plan; tick sessions as you finish.
@@ -102,11 +111,11 @@ Sign in → Documents → upload each Spanish original and each English translat
 
 Seeded cards and questions live in `server/seed/content.js`. Edit and redeploy to change wording; your review history is kept.
 
-## 7. Rotating the master key
+## 8. Rotating the master key
 1. Generate a new key: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`
 2. Railway → techman → add `FILE_MASTER_KEY_OLD` = current key, set `FILE_MASTER_KEY` = new key.
 3. Run `npm run rotate-key` in the service (Railway → ⋯ → Run command).
 4. Open a document to confirm, then delete `FILE_MASTER_KEY_OLD`.
 
-## 8. Local development
+## 9. Local development
 Use a local Postgres and set `CF_ACCESS_DISABLED=true` (refused when `NODE_ENV=production`).

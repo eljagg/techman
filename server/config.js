@@ -48,6 +48,12 @@ export const config = {
   newCardsPerDay: Number(env.NEW_CARDS_PER_DAY || 15),
   maxUploadMb: Number(env.MAX_UPLOAD_MB || 30),
   maxPackMb: Number(env.MAX_PACK_MB || 40),
+  ai: {
+    key: (env.ANTHROPIC_API_KEY || '').trim(),
+    model: (env.AI_MODEL || 'claude-sonnet-5-5').trim(),
+    baseUrl: (env.AI_BASE_URL || 'https://api.anthropic.com').trim().replace(/\/$/, ''),
+    dailyLimit: Number(env.AI_DAILY_LIMIT || 150),
+  },
   timeZone: env.APP_TIME_ZONE || 'America/Jamaica',
 };
 

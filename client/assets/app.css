@@ -28,7 +28,7 @@ code{font-size:13px;background:var(--accent-soft);color:var(--accent);padding:1p
 
 /* shell */
 .top{position:sticky;top:0;z-index:5;background:var(--panel);border-bottom:1px solid var(--line)}
-.top-inner{max-width:1080px;margin:0 auto;padding:10px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.top-inner{max-width:min(1820px,100%);margin:0 auto;padding:10px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .brand{font-weight:800;letter-spacing:.01em}
 .brand small{display:block;font-family:var(--mono);font-size:11px;font-weight:400;color:var(--muted);letter-spacing:.06em;text-transform:uppercase}
 .tabs{display:flex;gap:2px;overflow-x:auto;flex:1;min-width:0}
@@ -145,6 +145,33 @@ dialog.viewer.noinfo .vinfo{display:none}
 .vstrip button.on{border-color:#4fb8bd}
 .vstrip img{height:60px;width:auto;display:block}
 @media (max-width:860px){.vbody{grid-template-columns:1fr;grid-template-rows:minmax(0,1fr) minmax(0,38vh)}.vinfo{border-left:0;border-top:1px solid #26333f}.vtitle{display:none}}
+/* AI */
+.aithread{display:flex;flex-direction:column;gap:14px}
+.aiq{align-self:flex-end;max-width:80%;background:var(--accent-soft);border-radius:10px;padding:10px 14px}
+.aianswer p{margin:0 0 8px}.aianswer ul,.aianswer ol{margin:0 0 8px;padding-left:22px;display:flex;flex-direction:column;gap:4px}
+.cite{display:inline-block;min-width:18px;text-align:center;font-family:var(--mono);font-size:11px;font-weight:700;line-height:16px;padding:0 4px;margin:0 1px;border-radius:4px;background:var(--accent-soft);color:var(--accent);text-decoration:none;vertical-align:super}
+.warnline{background:var(--warn-soft);border-left:4px solid var(--warn);padding:4px 8px;border-radius:4px}
+.aisources summary{cursor:pointer}.aisources ol{font-size:13px;padding-left:22px;display:flex;flex-direction:column;gap:6px}
+.aisources li.flash-src{outline:2px solid var(--accent);border-radius:4px}
+.aiusage{font-size:11px;text-align:right}
+.askbar{position:sticky;bottom:10px;box-shadow:0 6px 24px rgba(0,0,0,.25)}
+.askbar textarea{min-height:70px}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font:inherit;font-size:13px;border:1px solid var(--line);background:var(--bg);color:var(--fg);border-radius:999px;padding:5px 12px;cursor:pointer}
+.chip:hover{border-color:var(--accent)}
+.issuegrid{display:grid;grid-template-columns:minmax(300px,420px) minmax(0,1fr);gap:18px;align-items:start}
+.issuegrid > .box:first-child{position:sticky;top:80px}
+.issueout:empty::before{content:"Your plan will appear here.";color:var(--muted)}
+.issuesteps{margin:0;padding-left:0;list-style:none;counter-reset:st;display:flex;flex-direction:column;gap:12px}
+.issuesteps > li{counter-increment:st;border:1px solid var(--line);border-radius:8px;padding:12px 14px 12px 52px;position:relative;display:flex;flex-direction:column;gap:6px}
+.issuesteps > li::before{content:counter(st);position:absolute;left:12px;top:12px;width:28px;height:28px;border-radius:50%;background:var(--accent);color:var(--accent-fg);font-weight:800;display:grid;place-items:center}
+.issuesteps > li.caution{border-color:var(--warn);background:var(--warn-soft)}
+.checklist{list-style:none;padding-left:0}
+.dflow.comp .dnode{flex:0 1 auto;min-width:0}
+.vask{display:flex;flex-direction:column;gap:6px;border-top:1px solid #26333f;padding-top:10px}
+.vask textarea{background:#0b1015;color:#e4ebf0;border-color:#2a3946}
+.coachbox{border-left:4px solid var(--accent);padding:8px 12px;background:var(--accent-soft);border-radius:6px}
+@media (max-width:900px){.issuegrid{grid-template-columns:1fr}.issuegrid > .box:first-child{position:static}}
 /* lessons */
 .sess.next{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
 .uploadfirst{border:2px solid var(--accent)}

@@ -128,6 +128,20 @@ CREATE TABLE IF NOT EXISTS figures (
 );
 CREATE INDEX IF NOT EXISTS figures_doc ON figures (doc, ord);
 ALTER TABLE plan_sessions ADD COLUMN IF NOT EXISTS figs JSONB NOT NULL DEFAULT '[]';
+CREATE TABLE IF NOT EXISTS kb_pack (
+  id          UUID PRIMARY KEY,
+  name        TEXT UNIQUE NOT NULL,
+  chunks      INTEGER NOT NULL,
+  size_bytes  INTEGER NOT NULL,
+  iv          BYTEA NOT NULL,
+  tag         BYTEA NOT NULL,
+  ciphertext  BYTEA NOT NULL,
+  wrap_iv     BYTEA NOT NULL,
+  wrap_tag    BYTEA NOT NULL,
+  wrapped_key BYTEA NOT NULL,
+  key_id      TEXT NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS quiz_attempts (
   id          BIGSERIAL PRIMARY KEY,
   question_id INTEGER NOT NULL REFERENCES quiz_questions(id) ON DELETE CASCADE,

@@ -14,6 +14,7 @@ import { config } from '../config.js';
 import { encryptFigure, decryptFigure } from '../crypto.js';
 import { SOURCES } from '../seed/sources.js';
 import { EXPLAIN } from '../seed/explanations.js';
+import { loadFigureIndex } from '../ai/kb.js';
 
 export const figures = express.Router();
 
@@ -138,6 +139,7 @@ figures.post('/pack', (req, res, next) => {
         client.release();
         req.file.buffer.fill(0);
       }
+      await loadFigureIndex().catch(() => {});
       await audit('fig_pack_upload', `${parsed.pack}: ${parsed.figures.length} images`, req.clientIp);
       res.json({ ok: true, pack: parsed.pack, count: parsed.figures.length });
     } catch (e) { next(e); }
@@ -148,6 +150,7 @@ figures.delete('/', async (req, res, next) => {
   try {
     if (req.body?.confirm !== 'DELETE') return res.status(400).json({ error: 'Type DELETE to confirm.' });
     const { rowCount } = await q(`DELETE FROM figures`);
+    await loadFigureIndex().catch(() => {});
     await audit('fig_delete_all', `${rowCount} images`, req.clientIp);
     res.json({ ok: true, deleted: rowCount });
   } catch (e) { next(e); }

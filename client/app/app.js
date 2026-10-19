@@ -227,6 +227,7 @@ function buildViewer() {
       f.why ? h('section', { class: 'lwhy' }, h('div', { class: 'ltag' }, 'Why it matters'), h('p', {}, ...txt(f.why))) : null,
       f.terms?.length ? h('section', {}, h('div', { class: 'ltag' }, 'Key terms'), h('ul', {}, f.terms.map((t) => h('li', {}, ...txt(t))))) : null,
       f.note ? h('details', {}, h('summary', { class: 'muted' }, 'Text from the document'), h('p', { class: 'muted' }, ...txt(f.note))) : null,
+      AISTAT?.enabled && AISTAT?.pack ? figureAskBox(f) : null,
       h('p', { class: 'muted vhelp' }, 'Scroll or pinch to zoom · drag to move · double-click to zoom in · ← → for next · Esc to go back'),
     ].filter(Boolean));
     strip.querySelectorAll('button').forEach((b, k) => b.classList.toggle('on', k === LB.i));
@@ -556,6 +557,10 @@ VIEWS.quiz = async () => {
         if (!r.correct) buttons[j].classList.add('wrong');
         why.replaceChildren(r.correct ? 'Correct. ' : 'Not quite. ', ...txt(r.why || ''));
         why.hidden = false;
+        if (!r.correct && AISTAT?.enabled && AISTAT?.pack) {
+          const holder = h('div', {});
+          why.after(h('div', {}, h('button', { class: 'btn', type: 'button', onclick: (e) => { e.target.remove(); coach(q, t, r, holder); } }, '✨ Explain with AI'), holder));
+        }
         answered++; if (r.correct) right++;
         score.textContent = `${right}/${answered} correct (${pct(right, answered)}%)`;
       } catch (e) { why.textContent = e.message; why.hidden = false; }
@@ -571,6 +576,7 @@ VIEWS.quiz = async () => {
     h('div', { class: 'row' }, h('label', { for: 'quizDoc', class: 'label' }, 'Questions from'), sel, score,
       h('button', { class: 'btn', onclick: render }, 'Start again')),
     h('p', { class: 'muted' }, 'Every answer is saved, so the Today page can show which sections you are weakest in. Target before you finish the plan: 85%.'),
+    AISTAT?.enabled && AISTAT?.pack ? aiQuizBox() : null,
     ...items,
     addQuestionForm(),
   ];
@@ -894,7 +900,7 @@ async function render() {
   const fn = VIEWS[name] || VIEWS.dashboard;
   document.querySelectorAll('#tabs a').forEach((a) => {
     const tab = name === 'lesson' ? 'plan' : name;
-    view.classList.toggle('wide', ['lesson', 'visuals', 'plan'].includes(name));
+    view.classList.toggle('wide', ['lesson', 'visuals', 'plan', 'ask', 'issue'].includes(name));
     if (a.getAttribute('href') === `#/${tab}`) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   });
   try {
@@ -912,5 +918,261 @@ window.addEventListener('hashchange', render);
 
 async function loadFigures() { try { FIGS = await api('/api/figures'); } catch { FIGS = []; } }
 Promise.all([api('/api/meta'), api('/api/glossary').catch(() => []), loadFigures()])
-  .then(([m, g]) => { META = m; GLOSSARY = g; buildAbbr(); render(); })
+  .then(([m, g]) => { META = m; GLOSSARY = g; buildAbbr(); aiStatus().catch(() => {}).finally(render); })
   .catch((e) => view.replaceChildren(errorBox(e)));
+
+// =====================================================================
+// AI: answers come only from your documents, with numbered citations.
+// =====================================================================
+let AISTAT = null;
+async function aiStatus(force = false) { if (!AISTAT || force) AISTAT = await api('/api/ai/status'); return AISTAT; }
+
+function aiInline(s, cites) {
+  // [n] citations become small pills; **bold** and `code` are honoured; everything else is text.
+  const out = [];
+  for (const part of String(s).split(/(\[\d+(?:,\s*\d+)*\]|\*\*[^*]+\*\*|`[^`]+`)/)) {
+    if (!part) continue;
+    const c = part.match(/^\[(\d+(?:,\s*\d+)*)\]$/);
+    if (c) {
+      for (const n of c[1].split(/,\s*/)) {
+        const src = cites.find((x) => x.n === Number(n));
+        out.push(h('a', { class: 'cite', href: '#', title: src ? `${src.docName} — ${src.loc}${src.title ? ' — ' + src.title : ''}` : 'source',
+          onclick: (e) => { e.preventDefault(); const el = e.target.closest('.aianswer')?.querySelector(`[data-src="${n}"]`); if (el) { el.closest('details').open = true; el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.classList.add('flash-src'); setTimeout(() => el.classList.remove('flash-src'), 1500); } } }, n));
+      }
+    } else if (/^\*\*.+\*\*$/.test(part)) out.push(h('strong', {}, ...txt(part.slice(2, -2))));
+    else if (/^`.+`$/.test(part)) out.push(h('code', {}, part.slice(1, -1)));
+    else out.push(...txt(part));
+  }
+  return out;
+}
+function aiText(text, cites = []) {
+  const blocks = []; let list = null, kind = null;
+  const flush = () => { if (list) { blocks.push(list); list = null; kind = null; } };
+  for (const raw of String(text || '').split('\n')) {
+    const line = raw.trim();
+    if (!line) { flush(); continue; }
+    const bullet = line.match(/^[-•*]\s+(.*)$/), num = line.match(/^(\d+)[.)]\s+(.*)$/);
+    if (bullet || num) {
+      const k = bullet ? 'ul' : 'ol';
+      if (kind !== k) { flush(); list = h(k, {}); kind = k; }
+      const body = bullet ? bullet[1] : num[2];
+      list.append(h('li', { class: body.startsWith('⚠') ? 'warnline' : '' }, ...aiInline(body, cites)));
+    } else { flush(); blocks.push(h('p', { class: line.startsWith('⚠') ? 'warnline' : '' }, ...aiInline(line, cites))); }
+  }
+  flush();
+  return blocks;
+}
+function aiSources(cites) {
+  if (!cites?.length) return null;
+  return h('details', { class: 'aisources' }, h('summary', { class: 'muted' }, `Sources (${cites.length})`),
+    h('ol', {}, cites.map((c) => h('li', { 'data-src': c.n },
+      h('strong', {}, c.docName), ` — ${c.loc}${c.title ? ' — ' + c.title : ''}`, h('div', { class: 'muted' }, c.excerpt, '…')))));
+}
+const aiFigs = (keys, title = 'Pictures') => {
+  const list = (keys || []).map(figByKey).filter(Boolean);
+  return list.length ? figStrip(list, { max: 6, title }) : null;
+};
+const aiUsage = (u) => u ? h('div', { class: 'muted aiusage' }, `${u.input + u.output} tokens${u.cached ? ` (${u.cached} cached)` : ''}`) : null;
+
+function aiSetup(st) {
+  if (!st.enabled) return h('div', { class: 'note' }, h('strong', {}, 'AI is not switched on yet. '),
+    'In Railway, open the techman service → Variables, add ANTHROPIC_API_KEY with your key, and let it redeploy.');
+  if (!st.pack) {
+    const file = h('input', { type: 'file', accept: '.tkpack', id: 'kbFile' });
+    const msg = h('p', { role: 'status', class: 'muted' });
+    const go = h('button', { class: 'btn primary', type: 'button', onclick: async () => {
+      if (!file.files[0]) { msg.textContent = 'Choose techman-knowledge.tkpack.'; return; }
+      go.disabled = true; msg.textContent = 'Encrypting and loading…';
+      const fd = new FormData(); fd.append('file', file.files[0]);
+      try { const r = await api('/api/ai/knowledge', { method: 'POST', body: fd }); msg.className = 'ok'; msg.textContent = `Loaded ${r.chunks} sections.`; await aiStatus(true); setTimeout(render, 700); }
+      catch (e) { msg.className = 'error'; msg.textContent = e.message; go.disabled = false; }
+    } }, 'Encrypt and load');
+    return h('div', { class: 'box uploadfirst' }, h('h2', {}, 'Set up: load the knowledge pack (one time)'),
+      h('p', {}, 'Choose ', h('code', {}, 'techman-knowledge.tkpack'), ' from your TECHMAN\\ai-pack folder. It holds the text of all 31 documents, so the AI can search them. It is encrypted before it is stored, like your PDFs.'),
+      h('div', { class: 'row' }, file, go), msg);
+  }
+  return null;
+}
+function docFilterSelect(id, includeAll = 'All documents') {
+  const s = h('select', { id }, includeAll ? h('option', { value: '' }, includeAll) : null,
+    META.sourceGroups.map((g) => h('optgroup', { label: g.name }, g.codes.map((c) => h('option', { value: c }, srcName(c))))));
+  return s;
+}
+
+// ---------- Ask AI ----------
+const ASK = { thread: [] };
+VIEWS.ask = async () => {
+  const st = await aiStatus(true);
+  const setup = aiSetup(st);
+  const thread = h('div', { class: 'aithread' });
+  const box = h('textarea', { id: 'askBox', rows: 3, placeholder: 'Ask anything about the system or the procedures, e.g. "How do I check which MBSS services are running?"' });
+  const scope = docFilterSelect('askDoc');
+  const btn = h('button', { class: 'btn primary', type: 'button' }, 'Ask ▶');
+  const status = h('span', { class: 'muted' });
+  const drawTurn = (t) => {
+    if (t.role === 'user') return h('div', { class: 'aiq' }, h('div', { class: 'label' }, 'You asked'), h('p', {}, t.content));
+    return h('div', { class: 'box aianswer' }, h('div', { class: 'label' }, 'Answer from your documents'),
+      ...aiText(t.content, t.cites), aiFigs(t.figures, 'Pictures that show it'), aiSources(t.cites), aiUsage(t.usage));
+  };
+  const draw = () => { thread.replaceChildren(...ASK.thread.map(drawTurn)); };
+  async function send(qText) {
+    const question = (qText || box.value).trim(); if (!question) return;
+    btn.disabled = true; status.textContent = 'Searching your documents and thinking… (10–30 s)';
+    ASK.thread.push({ role: 'user', content: question }); draw(); box.value = '';
+    try {
+      const r = await api('/api/ai/ask', { method: 'POST', body: { question, docs: scope.value ? [scope.value] : null,
+        history: ASK.thread.slice(0, -1).slice(-4).map((t) => ({ role: t.role, content: t.content })) } });
+      ASK.thread.push({ role: 'assistant', content: r.answer, cites: r.cites, figures: r.figures, usage: r.usage });
+      status.textContent = '';
+    } catch (e) { ASK.thread.pop(); box.value = question; status.textContent = ''; thread.append(errorBox(e)); btn.disabled = false; return; }
+    btn.disabled = false; draw(); thread.lastChild?.scrollIntoView({ behavior: 'smooth', block: 'start' }); aiStatus(true);
+  }
+  btn.addEventListener('click', () => send());
+  box.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) send(); });
+  draw();
+  const examples = ['How do I escalate a case to the Tech team in GLPI?', 'What does MBSS do and how do I check its services?', 'A remote site cannot send dossiers. What evidence do I collect?', 'How do I add a datafile to an Oracle tablespace?', 'What is the difference between TTO and TTR?', 'How is the system shut down in the right order?'];
+  return [
+    h('div', { class: 'lhead' }, h('div', {}, h('div', { class: 'label' }, `AI tutor · ${st.model} · ${st.usedToday}/${st.dailyLimit} today`), h('h1', {}, 'Ask your documents')),
+      ASK.thread.length ? h('button', { class: 'btn', type: 'button', onclick: () => { ASK.thread = []; render(); } }, 'New conversation') : null),
+    setup,
+    h('p', { class: 'muted' }, 'Answers use only your 31 documents and cite them [1], [2]… Click a number to see the passage. Risky actions are marked ⚠.'),
+    thread,
+    st.enabled && st.pack ? h('div', { class: 'box askbar' }, box,
+      h('div', { class: 'row' }, h('label', { for: 'askDoc', class: 'label' }, 'Search in'), scope, btn, status),
+      ASK.thread.length ? null : h('div', { class: 'chips' }, examples.map((x) => h('button', { class: 'chip', type: 'button', onclick: () => send(x) }, x)))) : null,
+  ];
+};
+
+// ---------- Fix an issue ----------
+const ISSUE = { last: null, input: null };
+VIEWS.issue = async () => {
+  const st = await aiStatus(true);
+  const setup = aiSetup(st);
+  const symptom = h('textarea', { id: 'isSym', rows: 5, placeholder: 'What is happening? Error messages, which screen, how many users or stations…' });
+  const site = h('select', { id: 'isSite' }, ['Not sure', 'Central site', 'CIB (remote site)', 'Montego Bay (MOB)', 'May Pen (MPN)', 'St Mary (STM)', 'Norman Manley Airport (workstations)', 'Sangster Airport (workstations)', "Commissioner's office (workstations)"].map((x) => h('option', {}, x)));
+  const when = h('input', { type: 'text', id: 'isWhen', placeholder: 'e.g. since 9:40 this morning, every time' });
+  const tried = h('textarea', { id: 'isTried', rows: 2, placeholder: 'What has been tried already (optional)' });
+  if (ISSUE.input) { symptom.value = ISSUE.input.symptom; site.value = ISSUE.input.site; when.value = ISSUE.input.when; tried.value = ISSUE.input.tried; }
+  const out = h('div', { class: 'issueout' });
+  const status = h('span', { class: 'muted' });
+  const btn = h('button', { class: 'btn primary', type: 'button' }, 'Build my plan ▶');
+  const examples = [
+    ['Remote site down', 'CIB stations cannot send dossiers to central. MESA shows transmission errors. Started this morning; other sites seem OK.'],
+    ['Matcher slow', 'Tenprint searches are taking much longer than normal and the review queue is growing. No error on screen.'],
+    ['Oracle space', 'Users get an error when saving a new person record. The DBA thinks a tablespace may be full.'],
+    ['Station scanner', 'A LiveScan station at May Pen does not detect the fingerprint scanner after a reboot.'],
+  ];
+  async function go() {
+    if (!symptom.value.trim()) { status.textContent = 'Describe the issue first.'; return; }
+    ISSUE.input = { symptom: symptom.value, site: site.value, when: when.value, tried: tried.value };
+    btn.disabled = true; status.textContent = 'Reading the procedures and building a plan… (20–60 s)';
+    try { ISSUE.last = await api('/api/ai/issue', { method: 'POST', body: ISSUE.input }); status.textContent = ''; drawPlan(); aiStatus(true); }
+    catch (e) { status.textContent = ''; out.replaceChildren(errorBox(e)); }
+    btn.disabled = false;
+  }
+  btn.addEventListener('click', go);
+  const copyBtn = (getText, label = 'Copy') => h('button', { class: 'btn', type: 'button', onclick: async (e) => {
+    try { await navigator.clipboard.writeText(getText()); e.target.textContent = 'Copied ✓'; setTimeout(() => { e.target.textContent = label; }, 1500); } catch { e.target.textContent = 'Select and copy manually'; } } }, label);
+
+  function drawPlan() {
+    const r = ISSUE.last; if (!r) { out.replaceChildren(); return; }
+    const p = r.plan, c = p.classification || {}, cites = r.cites;
+    const sev = { High: 'bad', Medium: 'warn', Low: 'good' };
+    out.replaceChildren(h('div', { class: 'aianswer', style: 'display:flex;flex-direction:column;gap:14px' },
+      h('div', { class: 'box' },
+        h('div', { class: 'label' }, 'Summary'), h('p', { style: 'font-size:17px' }, ...aiInline(p.summary, cites)),
+        h('div', { class: 'row' }, h('span', { class: 'pill' }, c.type), h('span', { class: 'pill' }, c.error_class),
+          h('span', { class: `pill ${sev[c.severity] || ''}` }, `Severity: ${c.severity}`), h('span', { class: 'pill' }, `Category: ${c.category_prefix}-…`),
+          h('span', { class: 'pill' }, `Confidence: ${p.confidence}`)),
+        c.components?.length ? h('div', { class: 'dflow comp' }, c.components.flatMap((x, i) => [i ? h('div', { class: 'darrow' }, '→') : null, h('div', { class: 'dnode tone-blue' }, h('strong', {}, ...txt(x)))])) : null,
+        c.why ? h('p', { class: 'muted' }, ...aiInline(c.why, cites)) : null),
+      h('div', { class: 'grid' },
+        p.ask_first?.length ? h('div', { class: 'box' }, h('h3', {}, 'Ask the client first'), h('ul', {}, p.ask_first.map((x) => h('li', {}, ...aiInline(x, cites))))) : null,
+        p.evidence?.length ? h('div', { class: 'box' }, h('h3', {}, 'Collect this evidence'),
+          h('ul', { class: 'checklist' }, p.evidence.map((x, i) => h('li', {}, h('label', {}, h('input', { type: 'checkbox', id: `ev${i}` }), ' ', h('strong', {}, ...txt(x.item)), ' — ', ...aiInline(x.how, cites)))))) : null),
+      h('div', { class: 'box' }, h('h2', {}, 'Steps'),
+        h('ol', { class: 'issuesteps' }, (p.steps || []).map((s) => h('li', { class: s.caution ? 'caution' : '' },
+          h('h3', {}, s.caution ? '⚠ ' : '', ...txt(s.title)),
+          ...aiText(s.detail, cites),
+          (s.cites || []).length ? h('div', { class: 'row' }, h('span', { class: 'muted' }, 'From: '), ...aiInline(`[${s.cites.join(',')}]`, cites)) : null,
+          aiFigs(s.pictures, 'Screen for this step'))))),
+      h('div', { class: 'grid' },
+        h('div', { class: 'box' }, h('h3', {}, `Escalation: ${p.escalation?.to || ''}`), h('p', {}, ...aiInline(p.escalation?.needed_if || '', cites)),
+          h('ul', {}, (p.escalation?.checklist || []).map((x) => h('li', {}, ...aiInline(x, cites))))),
+        h('div', { class: 'box' }, h('h3', {}, 'GLPI ticket draft'),
+          h('label', { class: 'field' }, 'Title', h('input', { type: 'text', value: p.ticket?.title || '', id: 'tkTitle' })),
+          h('label', { class: 'field' }, 'Description', h('textarea', { rows: 9, id: 'tkDesc' }, p.ticket?.description || '')),
+          h('div', { class: 'row' }, copyBtn(() => document.getElementById('tkTitle').value, 'Copy title'), copyBtn(() => document.getElementById('tkDesc').value, 'Copy description')),
+          h('p', { class: 'muted' }, 'Fill in the [ ] parts before pasting into GLPI.'))),
+      p.gaps?.length ? h('div', { class: 'note' }, h('strong', {}, 'Not covered by your documents — confirm with your coordinator or the Tech team: '), h('ul', {}, p.gaps.map((x) => h('li', {}, x)))) : null,
+      aiFigs(r.figures, 'More related pictures'),
+      aiSources(cites), aiUsage(r.usage)));
+  }
+  drawPlan();
+  return [
+    h('div', {}, h('div', { class: 'label' }, `Issue helper · ${st.usedToday}/${st.dailyLimit} AI requests today`), h('h1', {}, 'Fix an issue')),
+    setup,
+    st.enabled && st.pack ? h('div', { class: 'issuegrid' },
+      h('div', { class: 'box' },
+        h('label', { class: 'field', for: 'isSym' }, 'What is the problem?', symptom),
+        h('div', { class: 'chips' }, examples.map(([t, v]) => h('button', { class: 'chip', type: 'button', onclick: () => { symptom.value = v; } }, t))),
+        h('label', { class: 'field', for: 'isSite' }, 'Where', site),
+        h('label', { class: 'field', for: 'isWhen' }, 'Since when', when),
+        h('label', { class: 'field', for: 'isTried' }, 'Already tried', tried),
+        h('div', { class: 'row' }, btn, status),
+        h('p', { class: 'muted' }, 'You get: classification, evidence checklist, ordered steps with the matching screenshots, when and how to escalate, and a GLPI ticket draft. Everything is cited from your documents.')),
+      out) : null,
+  ];
+};
+
+// ---------- Ask about this picture (inside the viewer) ----------
+function figureAskBox(f) {
+  const box = h('textarea', { rows: 2, placeholder: 'Ask about this picture…' });
+  const ans = h('div', { class: 'aianswer' });
+  const btn = h('button', { class: 'btn', type: 'button', onclick: async () => {
+    const question = box.value.trim(); if (!question) return;
+    btn.disabled = true; ans.replaceChildren(h('p', { class: 'muted' }, 'Looking at the picture…'));
+    try { const r = await api('/api/ai/figure', { method: 'POST', body: { key: f.key, question } }); ans.replaceChildren(...aiText(r.answer, r.cites), aiSources(r.cites)); }
+    catch (e) { ans.replaceChildren(errorBox(e)); }
+    btn.disabled = false;
+  } }, 'Ask AI');
+  box.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) btn.click(); });
+  return h('section', { class: 'vask' }, h('div', { class: 'ltag' }, 'Ask about this picture'), box, h('div', { class: 'row' }, btn), ans);
+}
+
+// ---------- AI quiz and coaching ----------
+function aiQuizBox() {
+  const doc = docFilterSelect('aqDoc', null);
+  doc.value = recall('aqDoc', 'A3A');
+  const topic = h('input', { type: 'text', id: 'aqTopic', placeholder: 'Topic (optional), e.g. tablespace, backup, STS' });
+  const out = h('div', { style: 'display:flex;flex-direction:column;gap:12px' });
+  const status = h('span', { class: 'muted' });
+  const btn = h('button', { class: 'btn primary', type: 'button', onclick: async () => {
+    remember('aqDoc', doc.value);
+    btn.disabled = true; status.textContent = 'Writing 5 questions from that document… (20–40 s)';
+    try {
+      const r = await api('/api/ai/quiz', { method: 'POST', body: { doc: doc.value, topic: topic.value } });
+      status.textContent = '';
+      out.replaceChildren(...r.questions.map((x, k) => {
+        const why = h('div', { class: 'aianswer', hidden: true });
+        const opts = h('div', { class: 'opts' }, x.options.map((t, j) => h('button', { type: 'button', onclick: () => {
+          [...opts.children].forEach((b) => { b.disabled = true; });
+          opts.children[x.answer].classList.add('right'); if (j !== x.answer) opts.children[j].classList.add('wrong');
+          why.replaceChildren(h('p', {}, h('strong', {}, j === x.answer ? 'Correct. ' : 'Not quite. ')), ...aiText(x.why, r.cites), x.picture ? aiFigs([x.picture]) : null, aiSources(r.cites));
+          why.hidden = false;
+        } }, ...txt(t))));
+        return h('div', { class: 'box' }, h('div', { class: 'label' }, `AI question ${k + 1} · ${srcName(doc.value)}`), h('p', { style: 'font-weight:600' }, ...txt(x.stem)), opts, why);
+      }));
+    } catch (e) { status.textContent = ''; out.replaceChildren(errorBox(e)); }
+    btn.disabled = false;
+  } }, 'Generate 5 questions');
+  return h('details', { class: 'box' }, h('summary', { style: 'cursor:pointer;font-weight:700' }, '✨ AI quiz from any document (Oracle, MBSS, backups, Face Expert…)'),
+    h('div', { class: 'row' }, doc, topic, btn, status), out);
+}
+async function coach(q, chosenText, r, holder) {
+  holder.replaceChildren(h('p', { class: 'muted' }, 'Asking the AI coach…'));
+  try {
+    const c = await api('/api/ai/coach', { method: 'POST', body: { stem: q.stem, chosen: chosenText, correct: q.options[r.answer], why: r.why } });
+    holder.replaceChildren(h('div', { class: 'aianswer coachbox' }, h('div', { class: 'ltag' }, 'AI coach'), ...aiText(c.answer, c.cites), aiFigs(c.figures), aiSources(c.cites)));
+  } catch (e) { holder.replaceChildren(errorBox(e)); }
+}
