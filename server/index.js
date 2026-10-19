@@ -13,6 +13,7 @@ import { documents } from './routes/documents.js';
 import { figures } from './routes/figures.js';
 import { ai, initAi } from './routes/ai.js';
 import { notes } from './routes/notes.js';
+import { nettm } from './routes/nettm.js';
 import { inbox, inboxHook } from './routes/inbox.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -90,6 +91,7 @@ app.use('/api/figures', figures);
 app.use('/api/ai', ai);
 app.use('/api/notes', notes);
 app.use('/api/inbox', inbox);
+app.use('/api/nettm', nettm);
 app.use('/api', study);
 app.use('/app', express.static(path.join(clientDir, 'app'), { index: false, maxAge: '30d', immutable: true }));
 app.get('/', (req, res) => res.type('html').send(APP_HTML));

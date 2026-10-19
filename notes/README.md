@@ -46,6 +46,8 @@ Limits to be aware of:
 
 AI (optional): `ANTHROPIC_API_KEY` (switches AI on), `AI_MODEL` (claude-sonnet-5-5), `AI_TRIAGE_MODEL` (claude-haiku-5-5, reads inbox emails), `AI_DAILY_LIMIT` (150 requests per day).
 
+nettm link (optional, see the nettm request document): `NETTM_URL` (nettm backend address), `NETTM_SECRET` (same value as `TECHMAN_SHARED_SECRET` in nettm), and `NETTM_CF_CLIENT_ID` / `NETTM_CF_CLIENT_SECRET` only if nettm is behind Cloudflare Access. With these set, plans show **⇪ Send to nettm**.
+
 Issue inbox (optional, see `cloudflare/inbox-worker/README.md`): `INBOX_SECRET` (shared with the Cloudflare Email Worker), `INBOX_ALLOWED_FROM` (comma-separated addresses or `@domains` allowed to send).
 
 Optional: `SESSION_HOURS` (12), `SESSION_IDLE_MINUTES` (120), `NEW_CARDS_PER_DAY` (15), `MAX_UPLOAD_MB` (30), `MAX_PACK_MB` (40), `APP_TIME_ZONE` (America/Jamaica).

@@ -264,3 +264,26 @@ abbr.gl{text-decoration:underline dotted;text-underline-offset:3px;cursor:help}
 .pnode .ptag{color:#c62828;font-weight:700;font-size:12px}
 .notelist{display:flex;flex-direction:column;gap:12px}
 .inboxbox label.row{flex-wrap:nowrap;align-items:flex-start;gap:8px}.inboxbox label.row input{margin-top:4px;flex:none}
+
+/* grouped navigation */
+.tabs{align-items:center}
+.tgroup{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);opacity:.7;padding:0 4px 0 10px;white-space:nowrap}
+.tgroup:first-child{padding-left:0}
+@media (max-width:720px){
+  .top{position:static}
+  .tabs{flex-wrap:wrap;overflow:visible;row-gap:2px}
+  .tabs a{padding:6px 9px;font-size:14px}
+  .tgroup{flex-basis:100%;padding:6px 0 0}
+}
+/* Fix an issue: empty state and step tracking */
+.issueout:empty::before{content:none}
+.howto{display:flex;flex-direction:column;gap:12px}
+.howflow{display:flex;flex-wrap:wrap;gap:8px;align-items:stretch}
+.howflow .hstep{flex:1 1 150px;border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--bg);display:flex;flex-direction:column;gap:4px}
+.howflow .hnum{width:26px;height:26px;border-radius:50%;background:var(--accent);color:#04201d;font-weight:800;display:grid;place-items:center}
+.howflow .darrow{align-self:center}
+.issuesteps li.done > h3{text-decoration:line-through;opacity:.6}
+.stepdone{display:inline-flex;gap:6px;align-items:center;font-size:13px;color:var(--muted);cursor:pointer;margin-top:6px}
+.worktop .inboxmini{display:flex;flex-direction:column;gap:6px;margin:6px 0}
+.worktop .inboxmini a{display:block;text-decoration:none;color:inherit;border:1px solid var(--line);border-radius:8px;padding:6px 10px}
+.worktop .inboxmini a:hover{border-color:var(--accent)}

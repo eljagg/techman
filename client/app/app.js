@@ -257,7 +257,24 @@ VIEWS.dashboard = async () => {
   const quizByDoc = Object.fromEntries(d.quiz.map((r) => [r.doc, r]));
   const totalQ = d.quiz.reduce((a, r) => a + r.attempts, 0), rightQ = d.quiz.reduce((a, r) => a + r.correct, 0);
 
+  let ib = null; try { ib = await api('/api/inbox'); } catch { /* AI off or not set up */ }
+  const open = (ib?.items || []).filter((x) => ['new', 'planned', 'opened', 'triaging'].includes(x.status));
+  const quick = h('input', { type: 'text', id: 'quickAsk', placeholder: 'Ask the documents anything… (Enter)' });
+  quick.addEventListener('keydown', (e) => { if (e.key === 'Enter' && quick.value.trim()) { ASK.pending = quick.value.trim(); location.hash = '#/ask'; } });
+  const work = h('div', { class: 'grid worktop' },
+    h('div', { class: 'box' },
+      h('div', { class: 'label' }, 'Issue inbox'),
+      h('div', { class: 'stat' }, open.length),
+      open.length ? h('div', { class: 'inboxmini' }, open.slice(0, 3).map((x) => h('a', { href: `#/issue?open=${x.id}` },
+        h('strong', {}, x.triage?.title || x.subject || '(no subject)'), h('div', { class: 'muted' }, `${x.triage?.site || ''}${x.status === 'planned' ? ' · plan ready' : ''}`))))
+        : h('p', { class: 'muted' }, 'No open issues.'),
+      h('div', { class: 'row' }, h('a', { class: 'btn primary', href: '#/issue' }, 'Fix an issue ▶'))),
+    h('div', { class: 'box' },
+      h('div', { class: 'label' }, 'Quick question'),
+      h('label', { for: 'quickAsk', class: 'muted' }, 'Answers come only from your documents and notes, with sources.'), quick,
+      h('div', { class: 'row' }, h('a', { href: '#/ask' }, 'Open Ask AI'), h('a', { href: '#/notes' }, 'My notes'))));
   return [
+    work,
     h('div', {}, h('div', { class: 'label' }, 'Today'), h('h1', {}, d.dueTotal + d.newAvailable > 0 ? `${d.dueTotal + d.newAvailable} cards ready to study` : 'All caught up')),
     h('div', { class: 'grid' },
       h('div', { class: 'box' },
@@ -270,10 +287,10 @@ VIEWS.dashboard = async () => {
         h('div', { class: 'stat' }, d.newAvailable),
         h('p', { class: 'muted' }, `${d.unseenTotal} cards not yet seen · ${d.reviewedToday} reviews done today`)),
       h('div', { class: 'box' },
-        h('div', { class: 'label' }, 'Study plan'),
+        h('div', { class: 'label' }, 'Lessons'),
         h('div', { class: 'stat' }, `${d.plan.done}/${d.plan.total}`),
         h('div', { class: 'bar' }, h('span', { style: `width:${pct(d.plan.done, d.plan.total)}%` })),
-        h('a', { href: '#/plan' }, 'Open the plan')),
+        h('a', { href: '#/plan' }, 'Open the lessons')),
       h('div', { class: 'box' },
         h('div', { class: 'label' }, 'Quiz accuracy'),
         h('div', { class: 'stat' }, totalQ ? `${pct(rightQ, totalQ)}%` : '—'),
@@ -409,7 +426,7 @@ VIEWS.plan = async () => {
   const done = rows.filter((r) => r.done_at).length;
   const next = rows.find((r) => !r.done_at);
   return [
-    h('div', {}, h('div', { class: 'label' }, `${done} of ${rows.length} lessons done`), h('h1', {}, 'Study plan')),
+    h('div', {}, h('div', { class: 'label' }, `${done} of ${rows.length} lessons done`), h('h1', {}, 'Lessons')),
     h('div', { class: 'box' },
       h('h2', {}, 'How each lesson works'),
       h('ol', { style: 'margin:0;padding-left:20px' },
@@ -1095,6 +1112,7 @@ VIEWS.ask = async () => {
     btn.disabled = false; draw(); thread.lastChild?.scrollIntoView({ behavior: 'smooth', block: 'start' }); aiStatus(true);
   }
   btn.addEventListener('click', () => send());
+  if (ASK.pending && st.enabled && st.pack) { const qp = ASK.pending; ASK.pending = null; setTimeout(() => send(qp), 0); }
   box.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) send(); });
   draw();
   const examples = ['How do I escalate a case to the Tech team in GLPI?', 'What does MBSS do and how do I check its services?', 'A remote site cannot send dossiers. What evidence do I collect?', 'How do I add a datafile to an Oracle tablespace?', 'What is the difference between TTO and TTR?', 'How is the system shut down in the right order?'];
@@ -1112,10 +1130,12 @@ VIEWS.ask = async () => {
 
 // ---------- Fix an issue ----------
 const ISSUE = { last: null, input: null };
-let TOPO = null;
+let TOPO = null, NETTM = { push: false };
 VIEWS.issue = async () => {
   const st = await aiStatus(true);
   if (!TOPO) TOPO = await api('/api/ai/topology').catch(() => null);
+  NETTM = await api('/api/nettm/status').catch(() => ({ push: false }));
+  const openId = new URLSearchParams(location.hash.split('?')[1] || '').get('open');
   const setup = aiSetup(st);
   const symptom = h('textarea', { id: 'isSym', rows: 5, placeholder: 'What is happening? Error messages, which screen, how many users or stations…' });
   const site = h('select', { id: 'isSite' }, ['Not sure', 'Central site', 'CIB (remote site)', 'Montego Bay (MOB)', 'May Pen (MPN)', 'St Mary (STM)', 'Norman Manley Airport (workstations)', 'Sangster Airport (workstations)', "Commissioner's office (workstations)"].map((x) => h('option', {}, x)));
@@ -1137,7 +1157,7 @@ VIEWS.issue = async () => {
     if (!symptom.value.trim()) { status.textContent = 'Describe the issue first.'; return; }
     ISSUE.input = { symptom: symptom.value, site: site.value, when: when.value, tried: tried.value, inboxId: ISSUE.input?.inboxId, glpi: ISSUE.input?.glpi };
     btn.disabled = true; status.textContent = 'Reading the procedures and building a plan… (20–60 s)';
-    try { ISSUE.last = await aiJob('/api/ai/issue', ISSUE.input, (sec) => { status.textContent = `Reading the procedures and building a plan… ${sec}s`; }); ISSUE.last.input = { ...ISSUE.input }; status.textContent = ''; drawPlan(); aiStatus(true); }
+    try { ISSUE.last = await aiJob('/api/ai/issue', ISSUE.input, (sec) => { status.textContent = `Reading the procedures and building a plan… ${sec}s`; }); ISSUE.last.input = { ...ISSUE.input }; status.textContent = ''; drawPlan(); aiStatus(true); if (window.innerWidth < 900) out.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
     catch (e) { status.textContent = ''; out.replaceChildren(errorBox(e)); }
     btn.disabled = false;
   }
@@ -1146,7 +1166,7 @@ VIEWS.issue = async () => {
     try { await navigator.clipboard.writeText(getText()); e.target.textContent = 'Copied ✓'; setTimeout(() => { e.target.textContent = label; }, 1500); } catch { e.target.textContent = 'Select and copy manually'; } } }, label);
 
   function drawPlan() {
-    const r = ISSUE.last; if (!r) { out.replaceChildren(); return; }
+    const r = ISSUE.last; if (!r) { out.replaceChildren(howTo()); return; }
     const p = r.plan, c = p.classification || {}, cites = r.cites;
     const sev = { High: 'bad', Medium: 'warn', Low: 'good' };
     out.replaceChildren(h('div', { class: 'aianswer', style: 'display:flex;flex-direction:column;gap:14px' },
@@ -1164,8 +1184,9 @@ VIEWS.issue = async () => {
         p.evidence?.length ? h('div', { class: 'box' }, h('h3', {}, 'Collect this evidence'),
           h('ul', { class: 'checklist' }, p.evidence.map((x, i) => h('li', {}, h('label', {}, h('input', { type: 'checkbox', id: `ev${i}` }), ' ', h('strong', {}, ...txt(x.item)), ' — ', ...aiInline(x.how, cites)))))) : null),
       !(p.steps || []).length ? null : h('div', { class: 'box' }, h('h2', {}, 'Steps'),
-        h('ol', { class: 'issuesteps' }, (p.steps || []).map((s) => h('li', { class: s.caution ? 'caution' : '' },
+        h('ol', { class: 'issuesteps' }, (p.steps || []).map((s, si) => h('li', { class: `${s.caution ? 'caution' : ''}${s.done ? ' done' : ''}` },
           h('h3', {}, s.caution ? '⚠ ' : '', ...txt(s.title)),
+          h('label', { class: 'stepdone' }, h('input', { type: 'checkbox', id: `sd${si}`, checked: Boolean(s.done), onchange: (e) => { s.done = e.target.checked; e.target.closest('li').classList.toggle('done', s.done); } }), 'Done'),
           ...aiText(s.detail, cites),
           (s.cites || []).length ? h('div', { class: 'row' }, h('span', { class: 'muted' }, 'From: '), ...aiInline(`[${s.cites.join(',')}]`, cites)) : null,
           aiFigs(s.pictures, 'Screen for this step'))))),
@@ -1182,7 +1203,30 @@ VIEWS.issue = async () => {
       aiFigs(r.figures, 'More related pictures'),
       aiSources(cites), aiUsage(r.usage)));
   }
+  function howTo() {
+    const step = (n, t, d) => h('div', { class: 'hstep' }, h('div', { class: 'hnum' }, n), h('strong', {}, t), h('div', { class: 'muted' }, d));
+    return h('div', { class: 'box howto' }, h('h2', {}, 'How this works'),
+      h('div', { class: 'howflow' },
+        step(1, 'Pick or describe', 'Click an inbox item, or type the problem and choose the site.'), h('div', { class: 'darrow' }, '→'),
+        step(2, 'Build my plan', 'The AI reads your documents and notes (20–90 s).'), h('div', { class: 'darrow' }, '→'),
+        step(3, 'Work the plan', 'Where to look on the network, evidence, steps with screenshots, escalation, ticket draft.'), h('div', { class: 'darrow' }, '→'),
+        step(4, 'Save the fix', 'What really fixed it goes into My notes, so next time the answer is better.')),
+      h('p', { class: 'muted' }, 'Steps marked ⚠ change or restart production. Get approval first.'));
+  }
   // Where the problem sits: the path from the site to central, suspects in red, exportable to nettm.
+  function nettmButtons(r) {
+    const msg = h('span', { class: 'muted' });
+    const dl = h('button', { class: 'btn', type: 'button', onclick: async () => { try { await nettmDownload(r); } catch (e) { msg.textContent = e.message; } } }, '⬇ Export to nettm (CSV)');
+    const send = h('button', { class: 'btn primary', type: 'button', hidden: !NETTM.push, onclick: async () => {
+      send.disabled = true; msg.textContent = 'Sending to nettm…';
+      try { const x = await api('/api/nettm/send', { method: 'POST', body: nettmBody(r) }); const t = x.result?.topology;
+        msg.textContent = `In nettm ✓ ${x.devices} devices${t ? ` · ${t.devicesCreated} new devices, ${t.linksCreated} links` : ''}${x.result?.suspectsMarked ? ` · ${x.result.suspectsMarked} marked suspect` : ''}`;
+        if (x.result?.url) msg.append(' ', h('a', { href: x.result.url, target: '_blank', rel: 'noopener' }, 'Open in nettm ↗')); }
+      catch (e) { msg.textContent = e.message; }
+      send.disabled = false;
+    } }, '⇪ Send to nettm');
+    return h('div', { class: 'row' }, send, dl, msg);
+  }
   function pathBox(r) {
     if (!r.path?.length || !TOPO) return null;
     const byId = Object.fromEntries(TOPO.nodes.map((n) => [n.id, n]));
@@ -1193,19 +1237,16 @@ VIEWS.issue = async () => {
       h('div', { class: 'ptype' }, n.type, n.model ? ` · ${n.model}` : ''), h('strong', {}, n.name), n.ip ? h('div', { class: 'mono' }, n.ip) : null,
       sus.has(n.id) ? h('div', { class: 'ptag' }, 'Suspect') : null);
     return h('div', { class: 'box' },
-      h('div', { class: 'lhead' }, h('h2', {}, 'Where to look'), h('div', { class: 'row' }, h('button', { class: 'btn', type: 'button', onclick: () => nettmCsv(r, nodes, sus) }, '⬇ Export to nettm (CSV)'))),
+      h('div', { class: 'lhead' }, h('h2', {}, 'Where to look'), nettmButtons(r)),
       h('p', { class: 'muted' }, r.site ? `Path from ${TOPO.sites[r.site]?.name || r.site} to the central servers. Red = parts the AI thinks are most likely involved. Hover a box for details.` : 'Central servers. Choose a site above for the full path. Red = most likely involved.'),
       h('div', { class: 'ppath' }, nodes.flatMap((n, i) => [i ? h('div', { class: 'darrow' }, '→') : null, card(n)])));
   }
-  function nettmCsv(r, nodes, sus) {
-    const byId = Object.fromEntries(TOPO.nodes.map((n) => [n.id, n]));
-    const esc = (v) => { const t = String(v ?? ''); return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
-    const head = ['Hostname', 'IP Address', 'Device Type', 'Model', 'Site', 'Connected Switch', 'Description'];
-    const title = r.plan?.ticket?.title || 'issue';
-    const lines = [head.join(',')].concat(nodes.map((n) => [n.name, String(n.ip || '').includes('/') ? '' : n.ip, n.type, n.model || '', TOPO.sites[n.site]?.short || n.site,
-      byId[n.up]?.name || '', `${sus.has(n.id) ? `SUSPECT for: ${title}. ` : ''}${n.desc}${String(n.ip || '').includes('/') ? ` (subnet ${n.ip})` : ''}`].map(esc).join(',')));
-    const blob = new Blob([lines.join('\r\n') + '\r\n'], { type: 'text/csv' });
-    const a = h('a', { href: URL.createObjectURL(blob), download: `nettm-${(r.site || 'central').toLowerCase()}-${new Date().toISOString().slice(0, 10)}.csv` });
+  const nettmBody = (r) => ({ path: r.path, suspects: r.suspects, site: r.site, title: r.plan?.ticket?.title || r.plan?.summary?.slice(0, 120) || '', summary: r.plan?.summary || '', glpi: r.input?.glpi || ISSUE.input?.glpi || '' });
+  async function nettmDownload(r) {
+    const res = await fetch('/api/nettm/csv', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'techman' }, body: JSON.stringify(nettmBody(r)) });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Export failed (${res.status}).`);
+    const name = (/filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || '') || [])[1] || 'techman.csv';
+    const a = h('a', { href: URL.createObjectURL(await res.blob()), download: name });
     document.body.append(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
   }
   // Close the loop: what really fixed it goes into your notes, and the AI searches them next time.
@@ -1265,6 +1306,7 @@ VIEWS.issue = async () => {
           h('button', { class: 'btn', type: 'button', onclick: async () => { await api(`/api/inbox/${it.id}/status`, { method: 'POST', body: { status: 'archived' } }).catch(() => {}); refreshInbox(); } }, 'Archive')));
     }));
     updateInboxBadge();
+    if (openId && !inboxList.dataset.opened) { const it = d.items.find((x) => x.id === openId); if (it) { inboxList.dataset.opened = '1'; openItem(it); } }
     return true;
   }
   (async function loop() { if (await refreshInbox()) setTimeout(loop, 30000); })();
@@ -1304,7 +1346,7 @@ VIEWS.issue = async () => {
         h('label', { class: 'field', for: 'isSite' }, 'Where', site),
         h('label', { class: 'field', for: 'isWhen' }, 'Since when', when),
         h('label', { class: 'field', for: 'isTried' }, 'Already tried', tried),
-        h('div', { class: 'row' }, btn, status, h('button', { class: 'btn', type: 'button', onclick: () => { ISSUE.input = null; ISSUE.last = null; fill({}); fromBadge.hidden = true; out.replaceChildren(); } }, 'Clear')),
+        h('div', { class: 'row' }, btn, status, h('button', { class: 'btn', type: 'button', onclick: () => { ISSUE.input = null; ISSUE.last = null; fill({}); fromBadge.hidden = true; status.textContent = ''; drawPlan(); } }, 'Clear')),
         h('p', { class: 'muted' }, 'You get: classification, evidence checklist, ordered steps with the matching screenshots, where to look on the network, when and how to escalate, and a GLPI ticket draft. Everything is cited from your documents.'))),
       out) : null,
   ];

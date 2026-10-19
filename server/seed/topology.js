@@ -79,3 +79,27 @@ export function siteCode(label) {
   if (t.includes('central')) return 'CENTRAL';
   return null;
 }
+
+// ---------- nettm export (one builder for the CSV download and the direct push) ----------
+// Header names match nettm's IPAM import (Hostname, IP Address, Device Type, Model, Site, Connected Switch, Description).
+// No usernames or passwords, ever.
+export function nettmRows(ids, suspects = [], title = '') {
+  const byId = Object.fromEntries(NODES.map((n) => [n.id, n]));
+  const sus = new Set(suspects);
+  const list = [...new Set([...ids, ...suspects])].map((id) => byId[id]).filter(Boolean);
+  return list.map((n) => {
+    const subnet = String(n.ip || '').includes('/');
+    return {
+      Hostname: n.name, 'IP Address': subnet ? '' : n.ip, 'Device Type': n.type, Model: n.model || '',
+      Site: SITES[n.site]?.short || n.site, 'Connected Switch': byId[n.up]?.name || '',
+      Description: `${sus.has(n.id) ? `SUSPECT for: ${title || 'issue'}. ` : ''}${n.desc}${subnet ? ` (subnet ${n.ip})` : ''}`,
+      _id: n.id, _suspect: sus.has(n.id),
+    };
+  });
+}
+export function nettmCsv(rows) {
+  const head = ['Hostname', 'IP Address', 'Device Type', 'Model', 'Site', 'Connected Switch', 'Description'];
+  // nettm splits on comma, semicolon and tab, so quote any cell containing them.
+  const esc = (v) => { const t = String(v ?? '').replace(/\r?\n/g, ' '); return /[",;\t]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
+  return [head.join(','), ...rows.map((r) => head.map((k) => esc(r[k])).join(','))].join('\r\n') + '\r\n';
+}
