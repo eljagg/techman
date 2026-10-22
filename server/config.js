@@ -63,6 +63,13 @@ export const config = {
     allowedFrom: (env.INBOX_ALLOWED_FROM || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
   },
   timeZone: env.APP_TIME_ZONE || 'America/Jamaica',
+  // Optional demo sign-in (read-only, no authenticator code). Off unless DEMO_PASSWORD_HASH is set.
+  demo: {
+    passwordHash: (env.DEMO_PASSWORD_HASH || '').trim(),
+    emails: (env.DEMO_EMAILS || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
+    hours: Number(env.DEMO_SESSION_HOURS || 4),
+    aiDailyLimit: Number(env.DEMO_AI_DAILY_LIMIT || 40),
+  },
 };
 
 if (!config.cf.disabled && (!config.cf.teamDomain || !config.cf.aud)) {

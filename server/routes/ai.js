@@ -14,6 +14,11 @@ import { loadKnowledge, loadFigureIndex, searchChunks, searchFigures, figureByKe
 import { NODES, ROLES, SITES, pathFor, resolveRoles, siteCode } from '../seed/topology.js';
 import { loadNotesIntoIndex } from './notes.js';
 import { LANG, langRule, toEnglish } from '../i18n.js';
+import { AsyncLocalStorage } from 'node:async_hooks';
+
+// The role of the signed-in session (owner or demo) for the running AI job.
+const ROLE = new AsyncLocalStorage();
+const isDemo = () => ROLE.getStore() === 'demo';
 
 export const ai = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024, files: 1, fields: 3 } });
@@ -26,12 +31,14 @@ async function allow() {
   while (recent.length && now - recent[0] > 60000) recent.shift();
   if (recent.length >= 12) { const e = new Error('Too many AI requests in a minute. Wait a moment.'); e.status = 429; throw e; }
   const day = new Date().toLocaleDateString('en-CA', { timeZone: config.timeZone });
-  const { rows } = await q(`SELECT key, value FROM app_state WHERE key IN ('ai_day','ai_count')`);
+  // Demo sessions have their own, smaller daily cap so a demo cannot use up your own.
+  const [kd, kc, limit, name] = isDemo() ? ['ai_demo_day', 'ai_demo_count', config.demo.aiDailyLimit, 'DEMO_AI_DAILY_LIMIT'] : ['ai_day', 'ai_count', config.ai.dailyLimit, 'AI_DAILY_LIMIT'];
+  const { rows } = await q(`SELECT key, value FROM app_state WHERE key IN ($1,$2)`, [kd, kc]);
   const st = Object.fromEntries(rows.map((r) => [r.key, r.value]));
-  const count = st.ai_day === day ? Number(st.ai_count || 0) : 0;
-  if (count >= config.ai.dailyLimit) { const e = new Error(`Daily AI limit reached (${config.ai.dailyLimit}). It resets at midnight, or raise AI_DAILY_LIMIT in Railway.`); e.status = 429; throw e; }
-  await q(`INSERT INTO app_state (key, value) VALUES ('ai_day',$1),('ai_count',$2)
-           ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, [day, String(count + 1)]);
+  const count = st[kd] === day ? Number(st[kc] || 0) : 0;
+  if (count >= limit) { const e = new Error(`Daily AI limit reached (${limit}). It resets at midnight, or raise ${name} in Railway.`); e.status = 429; throw e; }
+  await q(`INSERT INTO app_state (key, value) VALUES ($1,$3),($2,$4)
+           ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, [kd, kc, day, String(count + 1)]);
   recent.push(now);
   return count + 1;
 }
@@ -59,8 +66,8 @@ export function startJob(kind, fn) {
 }
 const asJob = (kind, fn) => (req, res) => {
   const body = req.body || {}, ip = req.clientIp;
-  const lang = req.lang || 'en';
-  res.status(202).json({ job: startJob(kind, () => LANG.run(lang, () => fn(body, ip))) });
+  const lang = req.lang || 'en', role = req.role || 'owner';
+  res.status(202).json({ job: startJob(kind, () => ROLE.run(role, () => LANG.run(lang, () => fn(body, ip)))) });
 };
 ai.get('/jobs/:id', (req, res) => {
   const j = JOBS.get(req.params.id);
@@ -83,7 +90,10 @@ const system = (extra = '') => {
   return [{ type: 'text', text: RULES, cache_control: { type: 'ephemeral' } }, ...(extra ? [{ type: 'text', text: extra }] : []), ...(lr ? [{ type: 'text', text: lr }] : [])];
 };
 
+// Demo sessions never search your own notes and fixes (source MY).
+const NOT_MY = Object.keys(SOURCES).filter((d) => d !== 'MY');
 function context(query, { docs = null, k = 8, figs = 6 } = {}) {
+  if (isDemo()) docs = (docs || NOT_MY).filter((d) => d !== 'MY');
   const chunks = searchChunks(query, { k, docs });
   const pics = searchFigures(query, { k: figs, docs });
   const src = chunks.map((c, i) => `[${i + 1}] ${SOURCES[c.doc]} — ${c.loc}${c.title ? ` — ${c.title}` : ''}\n${c.text}`).join('\n\n');
@@ -102,11 +112,13 @@ const usage = (r) => ({ input: r.usage?.input_tokens || 0, output: r.usage?.outp
 ai.get('/status', async (req, res, next) => {
   try {
     const { rows: [p] } = await q(`SELECT chunks, size_bytes, created_at FROM kb_pack WHERE name = 'knowledge'`);
-    const { rows } = await q(`SELECT key, value FROM app_state WHERE key IN ('ai_day','ai_count')`);
+    const demo = req.role === 'demo';
+    const [kd, kc] = demo ? ['ai_demo_day', 'ai_demo_count'] : ['ai_day', 'ai_count'];
+    const { rows } = await q(`SELECT key, value FROM app_state WHERE key IN ($1,$2)`, [kd, kc]);
     const st = Object.fromEntries(rows.map((r) => [r.key, r.value]));
     const day = new Date().toLocaleDateString('en-CA', { timeZone: config.timeZone });
     res.json({ enabled: aiEnabled(), model: config.ai.model, pack: p || null, loaded: kbStatus(),
-      usedToday: st.ai_day === day ? Number(st.ai_count || 0) : 0, dailyLimit: config.ai.dailyLimit });
+      usedToday: st[kd] === day ? Number(st[kc] || 0) : 0, dailyLimit: demo ? config.demo.aiDailyLimit : config.ai.dailyLimit });
   } catch (e) { next(e); }
 });
 
@@ -171,7 +183,9 @@ ai.post('/ask', asJob('ask', async (body, ip) => {
 }));
 
 // ---------- 2. Issue helper ----------
-const ISSUE_TOOL = {
+function issueTool(platform) {
+  const cc = platform === 'cc';
+  return {
   name: 'issue_plan',
   description: 'A structured troubleshooting and documentation plan for a JCF MBIS support issue, grounded in the SOURCES.',
   input_schema: {
@@ -181,7 +195,7 @@ const ISSUE_TOOL = {
       classification: { type: 'object', properties: {
         type: { type: 'string', enum: ['Incident', 'Request'] },
         error_class: { type: 'string', enum: ['Application', 'Operating system', 'Database', 'Hardware – servers', 'Hardware – peripherals and stations', 'Communications', 'External applications'] },
-        severity: { type: 'string', enum: ['High', 'Medium', 'Low'] },
+        severity: { type: 'string', enum: cc ? ['Critical', 'High', 'Low'] : ['High', 'Medium', 'Low'], description: cc ? 'Customer Care priority: Critical = system down, High = partial impact, Low = no effect on continuity.' : 'GLPI priority.' },
         category_prefix: { type: 'string', enum: ['SW', 'HW', 'BK', 'EX', 'OP', 'AD', 'SP', 'SL'] },
         components: { type: 'array', items: { type: 'string' }, description: 'System parts likely involved, e.g. MESA station, DSM, WFS, MBSS, Oracle, Fortigate 60F, JCF WAN.' },
         why: { type: 'string' } }, required: ['type', 'error_class', 'severity', 'category_prefix', 'components', 'why'] },
@@ -195,9 +209,10 @@ const ISSUE_TOOL = {
         required: ['title', 'detail', 'caution', 'cites', 'pictures'] } },
       escalation: { type: 'object', properties: {
         needed_if: { type: 'string', description: 'When to escalate.' },
-        to: { type: 'string', enum: ['Tech team (level 2.5)', 'Hotline Colombia', 'DevOps', 'Not needed yet'] },
+        to: { type: 'string', enum: cc ? ['IAFIS Tech (level 2.5) – Responder y escalar (JPS projects)', 'IAFIS Tech (level 2.5) – agreed procedure', 'Supplier – Esperando entidad externa', 'Hotline Colombia', 'Not needed yet'] : ['Tech team (level 2.5)', 'Hotline Colombia', 'DevOps', 'Not needed yet'] },
         checklist: { type: 'array', items: { type: 'string' } } }, required: ['needed_if', 'to', 'checklist'] },
-      ticket: { type: 'object', properties: { title: { type: 'string' }, description: { type: 'string', description: 'Ready-to-paste GLPI description: symptoms, actions taken so far (placeholders the engineer fills in are marked with [ ]), current diagnosis.' } }, required: ['title', 'description'] },
+      ticket: { type: 'object', properties: { title: { type: 'string' }, description: { type: 'string', description: cc ? 'Ready-to-paste Customer Care comment: diagnosis, checks performed, activities, evidence collected, test results, conclusions (placeholders the engineer fills in are marked with [ ]).' : 'Ready-to-paste GLPI description: symptoms, actions taken so far (placeholders the engineer fills in are marked with [ ]), current diagnosis.' },
+        ...(cc ? { reply_option: { type: 'string', enum: ['Responder', 'Responder y cambiar estado → Esperando al cliente', 'Responder y cambiar estado → Esperando entidad externa', 'Responder y cambiar estado → Esperando una fecha', 'Responder y escalar', 'Responder y solucionar'], description: 'The Customer Care reply option to use when posting this comment.' } } : {}) }, required: cc ? ['title', 'description', 'reply_option'] : ['title', 'description'] },
       suspect_parts: { type: 'array', items: { type: 'string', enum: ROLES }, description: 'Parts of the JCF topology most likely involved, most likely first.' },
       gaps: { type: 'array', items: { type: 'string' }, description: 'What the sources do not cover and needs confirmation.' },
       confidence: { type: 'string', enum: ['High', 'Medium', 'Low'] },
@@ -205,6 +220,7 @@ const ISSUE_TOOL = {
     required: ['summary', 'classification', 'ask_first', 'evidence', 'steps', 'escalation', 'ticket', 'suspect_parts', 'gaps', 'confidence'],
   },
 };
+}
 
 // Which important parts of a plan are missing or empty.
 function planGaps(p) {
@@ -225,11 +241,14 @@ export async function buildIssuePlan(body, ip) {
     if (!symptom) throw bad('Describe the issue.');
     const site = str(body.site, 80), when = str(body.when, 120), tried = str(body.tried, 1500);
     await allow();
-    const ctx = context(await toEnglish(`${symptom} ${site} ${tried}`), { k: 12, figs: 10 });
+    const platform = body.platform === 'cc' ? 'cc' : 'glpi';
+    const ctx = context(`${await toEnglish(`${symptom} ${site} ${tried}`)}${platform === 'cc' ? ' Customer Care InvGate reply option status' : ''}`, { k: 12, figs: 10 });
     const req1 = {
-      system: system('Fill in the issue_plan tool. Steps must be concrete, in the order a level 2 engineer would do them, each grounded in SOURCES with cites. Include the GLPI documentation steps (take ownership, tasks with time, approvals before remote access, escalation through ClienteConsulta nuevo) where they apply. Prefer pictures that show the exact screen for a step.'),
+      system: system(platform === 'cc'
+        ? 'Fill in the issue_plan tool. The case is handled in Customer Care (InvGate). Steps must be concrete, in the order a level 2 engineer would do them, each grounded in SOURCES with cites. Include the Customer Care documentation steps where they apply: "Asignar a mí" to take the ticket, document diagnosis, checks, activities, evidence, results and conclusions in the comment field, tick "Interno" for internal notes, check the priority against the Priority Matrix (Critical, High, Low), approval before any VPN connection, the right reply option ("Esperando al cliente", "Esperando entidad externa" with the supplier ticket number, "Esperando una fecha" only for a date agreed with the client, "Responder y escalar" only for JPS projects, "Responder y solucionar" when documented), a follow-up at least every 3 days, and recategorising to the root cause. Prefer pictures that show the exact screen for a step.'
+        : 'Fill in the issue_plan tool. Steps must be concrete, in the order a level 2 engineer would do them, each grounded in SOURCES with cites. Include the GLPI documentation steps (take ownership, tasks with time, approvals before remote access, escalation through ClienteConsulta nuevo) where they apply. Prefer pictures that show the exact screen for a step.'),
       messages: [{ role: 'user', content: `JCF TOPOLOGY (for suspect_parts):\n${TOPO}\n\nSOURCES:\n${ctx.src || '(none found)'}\n\nPICTURES:\n${ctx.pic || '(none)'}\n\nISSUE REPORTED: ${symptom}\nSITE: ${site || 'not given'}\nWHEN: ${when || 'not given'}\nALREADY TRIED: ${tried || 'nothing yet'}` }],
-      tools: [ISSUE_TOOL], tool_choice: { type: 'tool', name: 'issue_plan' }, max_tokens: 10000,
+      tools: [issueTool(platform)], tool_choice: { type: 'tool', name: 'issue_plan' }, max_tokens: 10000,
     };
     let r = await claude(req1);
     let plan = toolInput(r, 'issue_plan');
@@ -251,7 +270,7 @@ export async function buildIssuePlan(body, ip) {
     const path = pathFor(code).map((n) => n.id);
     const suspects = resolveRoles((plan.suspect_parts || []).filter((x) => ROLES.includes(x)), code);
     await audit('ai_issue', symptom.slice(0, 120), ip);
-    return { plan, site: code, path, suspects, cites: ctx.cites, figures: ctx.pics.slice(0, 6).map((f) => f.key), usage: usage(r) };
+    return { plan, platform, site: code, path, suspects, cites: ctx.cites, figures: ctx.pics.slice(0, 6).map((f) => f.key), usage: usage(r) };
 }
 ai.post('/issue', asJob('issue', buildIssuePlan));
 ai.get('/topology', (req, res) => res.json({ nodes: NODES, sites: SITES }));

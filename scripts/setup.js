@@ -15,6 +15,16 @@ function askHidden(question) {
   });
 }
 
+// npm run setup-demo: only makes the hash for the optional demo sign-in.
+if (process.argv.includes('--demo')) {
+  const d1 = await askHidden('Choose a demo password (12+ characters, different from yours): ');
+  if (d1.length < 12) { console.error('Use at least 12 characters.'); process.exit(1); }
+  const d2 = await askHidden('Type it again: ');
+  if (d1 !== d2) { console.error('The passwords do not match.'); process.exit(1); }
+  console.log(`\nAdd to Railway → techman → Variables:\n\nDEMO_PASSWORD_HASH=${hashPassword(d1)}\n\nOptional: DEMO_EMAILS (comma-separated Cloudflare Access emails that may only use the demo),\nDEMO_SESSION_HOURS (4), DEMO_AI_DAILY_LIMIT (40). Remove DEMO_PASSWORD_HASH to switch the demo off.\n`);
+  process.exit(0);
+}
+
 const pw1 = await askHidden('Choose a portal password (16+ characters): ');
 if (pw1.length < 16) { console.error('Use at least 16 characters.'); process.exit(1); }
 const pw2 = await askHidden('Type it again: ');

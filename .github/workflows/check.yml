@@ -1,0 +1,15 @@
+# Runs the content and syntax checks on every push. A red cross on GitHub means something
+# would break the app; fix it before Railway deploys.
+name: check
+on: [push, pull_request]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm test

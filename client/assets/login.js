@@ -1,3 +1,5 @@
+// Same theme as the portal (Auto, Light or Dark, kept in this browser).
+try { const th = localStorage.getItem('techman:theme'); if (th === 'light' || th === 'dark') document.documentElement.dataset.theme = th; } catch { /* ignore */ }
 // The sign-in page follows the language chosen inside the portal (kept in this browser).
 const L = (() => { try { return localStorage.getItem('techman:lang') || 'en'; } catch { return 'en'; } })();
 const T = {

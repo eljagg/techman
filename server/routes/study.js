@@ -26,7 +26,7 @@ async function newSeenToday() {
 }
 
 study.get('/meta', (req, res) => {
-  res.json({ docs: DOC_NAMES, sources: SOURCES, sourceGroups: SOURCE_GROUPS, email: req.cfEmail,
+  res.json({ docs: DOC_NAMES, sources: SOURCES, sourceGroups: SOURCE_GROUPS, email: req.cfEmail, role: req.role || 'owner',
     timeZone: config.timeZone, newPerDay: config.newCardsPerDay });
 });
 
@@ -63,7 +63,7 @@ study.get('/dashboard', async (req, res, next) => {
       reviewedToday: reviews.rows[0].n,
       plan: plan.rows[0],
       quiz: quiz.rows,
-      logins: logins.rows,
+      logins: req.role === 'demo' ? [] : logins.rows,
       documents: docs.rows[0].n,
     });
   } catch (e) { next(e); }
@@ -195,7 +195,7 @@ study.post('/quiz/:id/answer', async (req, res, next) => {
       return res.status(400).json({ error: 'Invalid answer.' });
     }
     const correct = chosen === qq.answer;
-    await q(`INSERT INTO quiz_attempts (question_id, chosen, correct) VALUES ($1,$2,$3)`, [id, chosen, correct]);
+    if (req.role !== 'demo') await q(`INSERT INTO quiz_attempts (question_id, chosen, correct) VALUES ($1,$2,$3)`, [id, chosen, correct]);
     res.json({ correct, answer: qq.answer, why: qq.why });
   } catch (e) { next(e); }
 });

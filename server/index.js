@@ -16,6 +16,7 @@ import { notes } from './routes/notes.js';
 import { nettm } from './routes/nettm.js';
 import { inbox, inboxHook } from './routes/inbox.js';
 import { i18n, langMiddleware } from './i18n.js';
+import { demoGuard } from './demo.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const clientDir = path.join(here, '..', 'client');
@@ -59,7 +60,15 @@ app.use((req, res, next) => {
 });
 
 // Railway health check: no data, no auth.
-app.get('/healthz', (req, res) => res.type('text').send('ok'));
+// It also checks the database, so Railway restarts an instance that has lost Postgres.
+app.get('/healthz', async (req, res) => {
+  try {
+    await Promise.race([pool.query('SELECT 1'), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 3000))]);
+    res.type('text').send('ok');
+  } catch {
+    res.status(503).type('text').send('database unavailable');
+  }
+});
 app.get('/favicon.ico', (req, res) => res.status(204).end());
 // Email Worker webhook: signed with INBOX_SECRET (HMAC), so it does not use Cloudflare Access.
 app.use('/hook/inbox', inboxHook);
@@ -85,6 +94,7 @@ app.post('/api/login', loginHandler);
 
 // Layer 2: everything below needs a signed-in session.
 app.use(requireSession());
+app.use(demoGuard());
 app.use((req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
 app.post('/api/logout', logoutHandler);
 app.post('/api/logout-all', logoutEverywhere);

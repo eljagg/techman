@@ -1,0 +1,5 @@
+# Keep line endings as LF in the repository (stops the CRLF warnings on Windows).
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.pdf binary

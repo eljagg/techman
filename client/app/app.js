@@ -1,6 +1,13 @@
 // Techman client. All text is inserted as text nodes (never innerHTML with data),
 // so nothing stored in the database can run as script.
 
+// Theme: Auto (follows Windows), Light or Dark. Applied first, so the page does not flash.
+const THEMES = { auto: '◐ Auto', light: '☀ Light', dark: '☾ Dark' };
+function applyTheme(t) {
+  if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+  else delete document.documentElement.dataset.theme;
+}
+try { applyTheme(localStorage.getItem('techman:theme') || 'auto'); } catch { /* storage blocked: follow Windows */ }
 const view = document.getElementById('view');
 let META = { docs: {}, sources: {}, sourceGroups: [], timeZone: 'America/Jamaica' };
 let GLOSSARY = [];
@@ -169,6 +176,15 @@ const trObserver = new MutationObserver((recs) => {
     else if (r.type === 'attributes') trAttr(r.target, r.attributeName);
   }
 });
+const DEMO = () => META.role === 'demo';
+function startTheme() {
+  const sel = document.getElementById('themeSel'); if (!sel) return;
+  let cur = 'auto'; try { cur = localStorage.getItem('techman:theme') || 'auto'; } catch { /* ignore */ }
+  sel.replaceChildren(...Object.entries(THEMES).map(([k, v]) => h('option', { value: k }, v)));
+  sel.value = THEMES[cur] ? cur : 'auto';
+  sel.addEventListener('change', () => { try { localStorage.setItem('techman:theme', sel.value); } catch { /* ignore */ } applyTheme(sel.value); });
+}
+startTheme();
 async function startI18n() {
   document.documentElement.lang = LANG;
   const sel = document.getElementById('langSel');
@@ -554,6 +570,7 @@ VIEWS.review = async () => {
     } catch (e) { area.replaceChildren(errorBox(e)); }
   }
   async function grade(id, g) {
+    if (DEMO()) { area.append(h('p', { class: 'note' }, 'In the demo, grades are not saved, so the same card comes back. Try the Quiz or Practice pages.')); return; }
     try { await api(`/api/review/${id}`, { method: 'POST', body: { grade: g } }); load(); }
     catch (e) { area.append(errorBox(e)); }
   }
@@ -1375,7 +1392,15 @@ async function updateInboxBadge() {
 setInterval(() => { if (!document.hidden) updateInboxBadge(); }, 60000);
 async function loadFigures() { try { FIGS = await api('/api/figures'); } catch { FIGS = []; } }
 Promise.all([api('/api/meta'), api('/api/glossary').catch(() => []), loadFigures(), startI18n()])
-  .then(([m, g]) => { META = m; GLOSSARY = g; buildAbbr(); aiStatus().catch(() => {}).finally(render); updateInboxBadge(); })
+  .then(([m, g]) => {
+    META = m; GLOSSARY = g; buildAbbr();
+    if (DEMO()) {
+      document.body.classList.add('demo');
+      document.querySelector('.top').after(h('div', { class: 'demobar', role: 'note' },
+        h('strong', {}, 'Demo mode'), ' · Lessons, cards, quiz, practice and Ask AI are open. Progress is not saved; personal notes, the issue inbox and documents are hidden.'));
+    }
+    aiStatus().catch(() => {}).finally(render); if (!DEMO()) updateInboxBadge();
+  })
   .catch((e) => view.replaceChildren(errorBox(e)));
 
 // =====================================================================
@@ -1458,7 +1483,7 @@ function aiSources(cites) {
   return h('details', { class: 'aisources' }, h('summary', { class: 'muted' }, `Sources (${cites.length})`), list);
 }
 async function saveNote(kind, title, text, extra = {}) { return api('/api/notes', { method: 'POST', body: { kind, title, text, ...extra } }); }
-const saveBtn = (getNote, label = '💾 Save to my notes') => h('button', { class: 'btn', type: 'button', onclick: async (e) => {
+const saveBtn = (getNote, label = '💾 Save to my notes') => DEMO() ? null : h('button', { class: 'btn', type: 'button', onclick: async (e) => {
   const b = e.target; b.disabled = true;
   try { const n = getNote(); await saveNote(n.kind, n.title, n.text, n.extra || {}); b.textContent = 'Saved ✓'; }
   catch (err) { b.textContent = err.message; b.disabled = false; } } }, label);
@@ -1556,6 +1581,10 @@ VIEWS.issue = async () => {
   const site = h('select', { id: 'isSite' }, ['Not sure', 'Central site', 'CIB (remote site)', 'Montego Bay (MOB)', 'May Pen (MPN)', 'St Mary (STM)', 'Norman Manley Airport (workstations)', 'Sangster Airport (workstations)', "Commissioner's office (workstations)"].map((x) => h('option', {}, x)));
   const when = h('input', { type: 'text', id: 'isWhen', placeholder: 'e.g. since 9:40 this morning, every time' });
   const tried = h('textarea', { id: 'isTried', rows: 2, placeholder: 'What has been tried already (optional)' });
+  // GLPI or Customer Care: changes the documentation steps, the priorities and the ticket draft.
+  const platform = h('select', { id: 'isPlat', onchange: () => remember('platform', platform.value) },
+    h('option', { value: 'glpi' }, 'GLPI'), h('option', { value: 'cc' }, 'Customer Care (InvGate)'));
+  platform.value = recall('platform', 'glpi') === 'cc' ? 'cc' : 'glpi';
   const fill = (x) => { symptom.value = x.symptom || ''; site.value = x.site || 'Not sure'; if (site.value === '') site.value = 'Not sure'; when.value = x.when || ''; tried.value = x.tried || ''; };
   if (ISSUE.input) fill(ISSUE.input);
   const fromBadge = h('div', { class: 'frominbox', hidden: true, 'data-notr': '' });
@@ -1571,7 +1600,7 @@ VIEWS.issue = async () => {
   ];
   async function go() {
     if (!symptom.value.trim()) { status.textContent = 'Describe the issue first.'; return; }
-    ISSUE.input = { symptom: symptom.value, site: site.value, when: when.value, tried: tried.value, inboxId: ISSUE.input?.inboxId, glpi: ISSUE.input?.glpi };
+    ISSUE.input = { symptom: symptom.value, site: site.value, when: when.value, tried: tried.value, platform: platform.value, inboxId: ISSUE.input?.inboxId, glpi: ISSUE.input?.glpi };
     btn.disabled = true; status.textContent = 'Reading the procedures and building a plan… (20–60 s)';
     try { ISSUE.last = await aiJob('/api/ai/issue', ISSUE.input, (sec) => { status.textContent = `Reading the procedures and building a plan… ${sec}s`; }); ISSUE.last.input = { ...ISSUE.input }; status.textContent = ''; drawPlan(); aiStatus(true); if (window.innerWidth < 900) out.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
     catch (e) { status.textContent = ''; out.replaceChildren(errorBox(e)); }
@@ -1584,12 +1613,13 @@ VIEWS.issue = async () => {
   function drawPlan() {
     const r = ISSUE.last; if (!r) { out.replaceChildren(howTo()); return; }
     const p = r.plan, c = p.classification || {}, cites = r.cites;
-    const sev = { High: 'bad', Medium: 'warn', Low: 'good' };
+    const sev = { Critical: 'bad', High: r.platform === 'cc' ? 'warn' : 'bad', Medium: 'warn', Low: 'good' };
+    const cc = r.platform === 'cc', tool = cc ? 'Customer Care' : 'GLPI';
     out.replaceChildren(h('div', { class: 'aianswer', style: 'display:flex;flex-direction:column;gap:14px' },
       h('div', { class: 'box' },
         h('div', { class: 'label' }, 'Summary'), h('p', { style: 'font-size:17px' }, ...aiInline(p.summary, cites)),
         h('div', { class: 'row' }, c.type ? h('span', { class: 'pill' }, c.type) : null, c.error_class ? h('span', { class: 'pill' }, c.error_class) : null,
-          c.severity ? h('span', { class: `pill ${sev[c.severity] || ''}` }, `Severity: ${c.severity}`) : null, c.category_prefix ? h('span', { class: 'pill' }, `Category: ${c.category_prefix}-…`) : null,
+          h('span', { class: 'pill' }, tool), c.severity ? h('span', { class: `pill ${sev[c.severity] || ''}` }, `${cc ? 'Priority' : 'Severity'}: ${c.severity}`) : null, c.category_prefix ? h('span', { class: 'pill' }, `Category: ${c.category_prefix}-…`) : null,
           p.confidence ? h('span', { class: 'pill' }, `Confidence: ${p.confidence}`) : null),
         p.incomplete?.length ? h('p', { class: 'error' }, `The AI left out: ${p.incomplete.join(', ')}. Click "Build my plan" again for a complete plan.`) : null,
         c.components?.length ? h('div', { class: 'dflow comp' }, c.components.flatMap((x, i) => [i ? h('div', { class: 'darrow' }, '→') : null, h('div', { class: 'dnode tone-blue' }, h('strong', {}, ...txt(x)))])) : null,
@@ -1609,11 +1639,12 @@ VIEWS.issue = async () => {
       h('div', { class: 'grid' },
         !p.escalation?.to ? null : h('div', { class: 'box' }, h('h3', {}, `Escalation: ${p.escalation?.to || ''}`), h('p', {}, ...aiInline(p.escalation?.needed_if || '', cites)),
           h('ul', {}, (p.escalation?.checklist || []).map((x) => h('li', {}, ...aiInline(x, cites))))),
-        !p.ticket?.title ? null : h('div', { class: 'box' }, h('h3', {}, 'GLPI ticket draft'),
+        !p.ticket?.title ? null : h('div', { class: 'box' }, h('h3', {}, cc ? 'Customer Care comment draft' : 'GLPI ticket draft'),
+          cc && p.ticket?.reply_option ? h('p', {}, h('span', { class: 'muted' }, 'Post it with: '), h('code', {}, p.ticket.reply_option)) : null,
           h('label', { class: 'field' }, 'Title', h('input', { type: 'text', value: p.ticket?.title || '', id: 'tkTitle' })),
           h('label', { class: 'field' }, 'Description', h('textarea', { rows: 9, id: 'tkDesc' }, p.ticket?.description || '')),
           h('div', { class: 'row' }, copyBtn(() => document.getElementById('tkTitle').value, 'Copy title'), copyBtn(() => document.getElementById('tkDesc').value, 'Copy description')),
-          h('p', { class: 'muted' }, 'Fill in the [ ] parts before pasting into GLPI.'))),
+          h('p', { class: 'muted' }, cc ? 'Fill in the [ ] parts before pasting into Customer Care. Tick "Interno" if the client must not see it.' : 'Fill in the [ ] parts before pasting into GLPI.'))),
       p.gaps?.length ? h('div', { class: 'note' }, h('strong', {}, 'Not covered by your documents — confirm with your coordinator or the Tech team: '), h('ul', {}, p.gaps.map((x) => h('li', {}, x)))) : null,
       fixBox(r),
       aiFigs(r.figures, 'More related pictures'),
@@ -1679,6 +1710,7 @@ VIEWS.issue = async () => {
         msg.textContent = 'Saved to your notes ✓ The AI will use it next time.'; refreshInbox();
       } catch (e) { msg.textContent = e.message; b.disabled = false; }
     } }, 'Save the fix');
+    if (DEMO()) return null;
     return h('div', { class: 'box' }, h('h3', {}, 'When it is solved'), fixed,
       h('div', { class: 'row' }, b, saveBtn(() => ({ kind: 'plan', title: r.plan?.ticket?.title || 'Issue plan', text: `${r.plan?.summary || ''}\n\n${(r.plan?.steps || []).map((s, i) => `${i + 1}. ${s.title}: ${s.detail}`).join('\n')}` }), '💾 Save this plan'), msg));
   }
@@ -1757,11 +1789,11 @@ VIEWS.issue = async () => {
     h('div', {}, h('div', { class: 'label' }, `Issue helper · ${st.usedToday}/${st.dailyLimit} AI requests today`), h('h1', {}, 'Fix an issue')),
     setup,
     st.enabled && st.pack ? h('div', { class: 'issuegrid' },
-      h('div', { class: 'issueleft' }, inboxPanel, formBox = h('div', { class: 'box' },
+      h('div', { class: 'issueleft' }, DEMO() ? null : inboxPanel, formBox = h('div', { class: 'box' },
         fromBadge,
         h('label', { class: 'field', for: 'isSym' }, 'What is the problem?', symptom),
         h('div', { class: 'chips' }, examples.map(([t, v]) => h('button', { class: 'chip', type: 'button', onclick: () => { symptom.value = v; } }, t))),
-        h('label', { class: 'field', for: 'isSite' }, 'Where', site),
+        h('div', { class: 'row', style: 'align-items:flex-end' }, h('label', { class: 'field', for: 'isSite' }, 'Where', site), h('label', { class: 'field', for: 'isPlat' }, 'Ticket platform', platform)),
         h('label', { class: 'field', for: 'isWhen' }, 'Since when', when),
         h('label', { class: 'field', for: 'isTried' }, 'Already tried', tried),
         h('div', { class: 'row' }, btn, status, h('button', { class: 'btn', type: 'button', title: 'Empty the form and the plan to start a new issue', onclick: () => {
@@ -1773,7 +1805,7 @@ VIEWS.issue = async () => {
           setTimeout(() => { if (status.textContent.startsWith('Cleared') || status.textContent.startsWith('Already')) status.textContent = ''; }, 4000);
           formBox.scrollIntoView({ behavior: 'smooth', block: 'start' }); symptom.focus({ preventScroll: true });
         } }, 'Clear')),
-        h('p', { class: 'muted' }, 'You get: classification, evidence checklist, ordered steps with the matching screenshots, where to look on the network, when and how to escalate, and a GLPI ticket draft. Everything is cited from your documents.'))),
+        h('p', { class: 'muted' }, 'You get: classification, evidence checklist, ordered steps with the matching screenshots, where to look on the network, when and how to escalate, and a GLPI ticket or Customer Care comment draft. Everything is cited from your documents.'))),
       out) : null,
   ];
 };

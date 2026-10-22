@@ -47,6 +47,8 @@ Limits to be aware of:
 
 AI (optional): `ANTHROPIC_API_KEY` (switches AI on), `AI_MODEL` (claude-sonnet-5-5), `AI_TRIAGE_MODEL` (claude-haiku-5-5, reads inbox emails), `AI_DAILY_LIMIT` (150 requests per day).
 
+Demo (optional, see section 12): `DEMO_PASSWORD_HASH` (from `npm run setup-demo`; switches the demo on), `DEMO_EMAILS`, `DEMO_SESSION_HOURS` (4), `DEMO_AI_DAILY_LIMIT` (40).
+
 Languages (optional): `AI_TRANSLATE_MODEL` (defaults to the triage model), `TRANSLATE_DAILY_LIMIT` (600 translation calls per day).
 
 nettm link (optional, see the nettm request document): `NETTM_URL` (nettm backend address), `NETTM_SECRET` (same value as `TECHMAN_SHARED_SECRET` in nettm), and `NETTM_CF_CLIENT_ID` / `NETTM_CF_CLIENT_SECRET` only if nettm is behind Cloudflare Access. With these set, plans show **⇪ Send to nettm**.
@@ -146,3 +148,19 @@ Use a local Postgres and set `CF_ACCESS_DISABLED=true` (refused when `NODE_ENV=p
 - AI answers, issue plans and AI quiz questions are written directly in the chosen language. Questions asked in another language are turned into English before the documents are searched.
 - Your notes, inbox emails and AI answers are never sent for translation or stored in the translation cache, because they are encrypted at rest.
 - Spanish screen labels (GLPI, Customer Care), names, codes and commands stay as they are in every language.
+
+## 12. Demo sign-in (for showing the portal to others)
+1. On your PC: `npm run setup-demo`, choose a demo password (not yours), copy `DEMO_PASSWORD_HASH` into Railway.
+2. Presenting from your own screen: sign out, then sign in with the demo password and leave the authenticator code empty.
+3. Letting someone use it on their own device: add their email to the Cloudflare Access policy and to `DEMO_EMAILS`. Those emails can only ever get the demo, never your account.
+4. The demo can read lessons, cards, glossary, pictures and reference, take the quiz, use Practice and Ask AI / Fix an issue (own daily cap, `DEMO_AI_DAILY_LIMIT`). It cannot see your notes, inbox, documents, sign-in history or audit log, and nothing it does changes your progress. Demo AI answers never search your notes.
+5. Remove `DEMO_PASSWORD_HASH` to switch the demo off. "Sign out everywhere" also ends demo sessions.
+
+## 13. Themes
+The ◐ selector at the top right: Auto (follows Windows), Light or Dark. The choice is kept in this browser and also applies to the sign-in page. Every text colour meets at least 4.5:1 contrast in both themes. Screenshots keep their white background so they stay readable.
+
+## 14. Fix an issue: GLPI or Customer Care
+Choose the ticket platform on the form. Customer Care plans use its priorities (Critical, High, Low), its reply options and documentation rules, and give a comment draft with the reply option to post it with. Automatic plans for inbox emails use GLPI.
+
+## 15. Checks before deploying
+`npm test` checks that every file parses and that lessons, pictures, cards, quiz and glossary are consistent. GitHub runs the same checks on every push (Actions tab; a red cross means do not deploy).

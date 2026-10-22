@@ -10,7 +10,9 @@
   "scripts": {
     "start": "node server/index.js",
     "setup": "node scripts/setup.js",
-    "rotate-key": "node scripts/rotate-key.js"
+    "setup-demo": "node scripts/setup.js --demo",
+    "rotate-key": "node scripts/rotate-key.js",
+    "test": "node scripts/check.js"
   },
   "dependencies": {
     "express": "4.22.3",
@@ -19,5 +21,6 @@
     "multer": "2.4.0",
     "pg": "8.23.1",
     "postal-mime": "2.7.6"
-  }
+  },
+  "packageManager": "npm@10.9.2"
 }
