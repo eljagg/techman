@@ -171,6 +171,14 @@ CREATE TABLE IF NOT EXISTS kb_pack (
   key_id      TEXT NOT NULL,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS i18n_cache (
+  lang       TEXT NOT NULL,
+  h          TEXT NOT NULL,
+  src        TEXT NOT NULL,
+  dst        TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (lang, h)
+);
 CREATE TABLE IF NOT EXISTS quiz_attempts (
   id          BIGSERIAL PRIMARY KEY,
   question_id INTEGER NOT NULL REFERENCES quiz_questions(id) ON DELETE CASCADE,
@@ -183,6 +191,10 @@ CREATE TABLE IF NOT EXISTS quiz_attempts (
 export async function migrateAndSeed() {
   await q(SCHEMA);
 
+  // One-time move: "Put it together" was lesson 10 and is now lesson 13 (Customer Care took 10–12).
+  const { rows: [moved] } = await q(`SELECT value FROM app_state WHERE key = 'plan_cc_v1'`);
+  const reviewWasDone = moved ? false : (await q(`SELECT 1 FROM plan_progress WHERE idx = 10`)).rowCount > 0;
+
   for (const s of PLAN) {
     await q(
       `INSERT INTO plan_sessions (idx, title, doc, secs, items, goal, figs) VALUES ($1,$2,$3,$4,$5,$6,$7)
@@ -190,6 +202,11 @@ export async function migrateAndSeed() {
          items=EXCLUDED.items, goal=EXCLUDED.goal, figs=EXCLUDED.figs`,
       [s.idx, s.title, s.doc, s.secs, JSON.stringify(s.items), s.goal, JSON.stringify(s.figs || [])]
     );
+  }
+  if (!moved) {
+    await q(`DELETE FROM plan_progress WHERE idx = 10`);
+    if (reviewWasDone) await q(`INSERT INTO plan_progress (idx) VALUES (13) ON CONFLICT DO NOTHING`);
+    await q(`INSERT INTO app_state (key, value) VALUES ('plan_cc_v1', $1) ON CONFLICT (key) DO NOTHING`, [new Date().toISOString()]);
   }
   // Seeded study content is upserted by a stable key, so redeploys refresh wording
   // without touching review history. Cards you add yourself have no seed_key.

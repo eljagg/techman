@@ -26,7 +26,7 @@ function h(tag, attrs, ...kids) {
 }
 
 async function api(path, opts = {}) {
-  const headers = { 'X-Requested-With': 'techman', ...(opts.headers || {}) };
+  const headers = { 'X-Requested-With': 'techman', 'X-Lang': LANG, ...(opts.headers || {}) };
   let body = opts.body;
   if (body && !(body instanceof FormData)) { headers['Content-Type'] = 'application/json'; body = JSON.stringify(body); }
   const res = await fetch(path, { method: opts.method || 'GET', headers, body, credentials: 'same-origin' });
@@ -38,7 +38,7 @@ async function api(path, opts = {}) {
   return data;
 }
 
-const fmtDate = (d) => d ? new Date(d).toLocaleString('en-JM', { timeZone: META.timeZone, dateStyle: 'medium', timeStyle: 'short' }) : '—';
+const fmtDate = (d) => d ? new Date(d).toLocaleString(LOCALES[LANG] || 'en-JM', { timeZone: META.timeZone, dateStyle: 'medium', timeStyle: 'short' }) : '—';
 const docName = (k) => META.docs[k] || k;
 const pct = (a, b) => (b ? Math.round((a * 100) / b) : 0);
 
@@ -54,6 +54,159 @@ function remember(key, value) { try { localStorage.setItem('techman:' + key, val
 function recall(key, fallback) { try { return localStorage.getItem('techman:' + key) || fallback; } catch { return fallback; } }
 
 function errorBox(e) { return h('p', { class: 'error', role: 'alert' }, e.message || String(e)); }
+
+// ---------- i18n: English, Español, Português, Français ----------
+// The page is built in English. When another language is chosen, every English text the
+// page shows is swapped for its translation: from the dictionary loaded at start, or, for
+// text not translated yet, from /api/i18n/translate (Claude translates it once and the
+// server keeps it). Keys follow the server's rules: whitespace collapsed, numbers as {0}.
+// Anything inside [data-notr] (AI answers, notes, inbox emails) is never sent to the server;
+// it only uses translations already in the dictionary.
+const LANGS = { en: 'English', es: 'Español', pt: 'Português', fr: 'Français' };
+const LOCALES = { en: 'en-JM', es: 'es-419', pt: 'pt-BR', fr: 'fr-FR' };
+let LANG = recall('lang', 'en'); if (!LANGS[LANG]) LANG = 'en';
+const I18N = { dict: new Map(), done: new WeakMap(), pending: new Map(), timer: null, busy: 0, warned: false, off: LANG === 'en' };
+const trNorm = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
+function trKey(s) {
+  s = trNorm(s);
+  if (s.includes('{')) return { key: s, nums: [] };
+  const nums = [];
+  const key = s.replace(/\d+(?:[.,:/]\d+)*/g, (m) => { nums.push(m); return `{${nums.length - 1}}`; });
+  return { key, nums };
+}
+const trWorth = (k) => k.length >= 2 && k.length <= 4000 && /[A-Za-z]{2}/.test(k) && !/^(https?:\/\/|www\.)\S+$/.test(k) && !/^[A-Z0-9_.\-/:§{}() ]+$/.test(k);
+const trFill = (t, nums) => t.replace(/\{(\d+)\}/g, (m, i) => (nums[i] !== undefined ? nums[i] : m));
+const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'CODE', 'PRE', 'KBD', 'TEXTAREA', 'ABBR', 'SVG']);
+const TR_ATTRS = ['title', 'placeholder', 'aria-label'];
+function trSkip(el) {
+  for (let e = el; e && e !== document.body; e = e.parentElement) {
+    if (SKIP_TAGS.has(e.tagName) || e.id === 'langSel' || e.classList?.contains('mono')) return true;
+  }
+  return false;
+}
+const noSend = (el) => Boolean(el.closest && el.closest('[data-notr]'));
+// A text node whose parent holds only text and glossary <abbr> marks is translated as one
+// unit (the whole sentence); the abbreviations are underlined again afterwards.
+function trUnit(node) {
+  const p = node.parentElement;
+  if (p && p.querySelector(':scope > abbr.gl') && [...p.children].every((c) => c.matches('abbr.gl'))) return p;
+  return node;
+}
+const trText = (unit) => (unit.nodeType === 3 ? unit.data : unit.textContent);
+function trApply(unit, key, nums, raw) {
+  const t = I18N.dict.get(key); if (!t) return false;
+  const out = trFill(t, nums);
+  if (unit.nodeType === 3) {
+    const v = raw.match(/^\s*/)[0] + out + raw.match(/\s*$/)[0];
+    if (unit.data !== v) unit.data = v;
+    I18N.done.set(unit, v);
+  } else {
+    unit.replaceChildren(...txt(out));
+    I18N.done.set(unit, unit.textContent);
+  }
+  return true;
+}
+function trQueue(key, fn) {
+  if (!I18N.pending.has(key)) I18N.pending.set(key, []);
+  I18N.pending.get(key).push(fn);
+  clearTimeout(I18N.timer); I18N.timer = setTimeout(trFlush, 120);
+}
+function trConsider(unit) {
+  const el = unit.nodeType === 3 ? unit.parentElement : unit;
+  if (!el || trSkip(el)) return;
+  const raw = trText(unit);
+  if (I18N.done.get(unit) === raw) return;
+  const { key, nums } = trKey(raw);
+  if (!trWorth(key)) return;
+  if (trApply(unit, key, nums, raw)) return;
+  if (noSend(el)) return;
+  trQueue(key, () => { if (unit.isConnected && trText(unit) === raw) trApply(unit, key, nums, raw); });
+}
+function trAttr(el, a) {
+  if (trSkip(el)) return;
+  const raw = el.getAttribute(a); if (!raw) return;
+  if (I18N.done.get(el) === `${a}\u0000${raw}`) return;
+  const { key, nums } = trKey(raw);
+  if (!trWorth(key)) return;
+  const set = () => { const t = I18N.dict.get(key); if (!t) return false; const v = trFill(t, nums); el.setAttribute(a, v); I18N.done.set(el, `${a}\u0000${v}`); return true; };
+  if (set() || noSend(el)) return;
+  trQueue(key, () => { if (el.getAttribute(a) === raw) set(); });
+}
+function trTree(root) {
+  if (I18N.off || !root) return;
+  if (root.nodeType === 3) { if (root.data.trim()) trConsider(trUnit(root)); return; }
+  if (root.nodeType !== 1) return;
+  const units = new Set();
+  const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  for (let n = w.nextNode(); n; n = w.nextNode()) if (n.data.trim()) units.add(trUnit(n));
+  units.forEach(trConsider);
+  for (const a of TR_ATTRS) {
+    if (root.hasAttribute(a)) trAttr(root, a);
+    root.querySelectorAll(`[${a}]`).forEach((el) => trAttr(el, a));
+  }
+}
+const trBadge = h('div', { class: 'trbadge', hidden: true, 'data-notr': '' });
+document.body.append(trBadge);
+async function trFlush() {
+  if (!I18N.pending.size) return;
+  const batch = new Map([...I18N.pending].slice(0, 250));
+  for (const k of batch.keys()) I18N.pending.delete(k);
+  I18N.busy++; trBadge.hidden = false; trBadge.textContent = `${LANGS[LANG]} …`;
+  try {
+    const r = await api('/api/i18n/translate', { method: 'POST', body: { lang: LANG, items: [...batch.keys()] } });
+    for (const [k, v] of Object.entries(r.map || {})) I18N.dict.set(k, v);
+  } catch (e) {
+    if (!I18N.warned) { I18N.warned = true; trBadge.textContent = e.message; setTimeout(() => { trBadge.hidden = true; }, 8000); }
+  }
+  for (const fns of batch.values()) fns.forEach((f) => f());
+  I18N.busy--;
+  if (I18N.pending.size) trFlush(); else if (!I18N.busy && !I18N.warned) trBadge.hidden = true;
+}
+const trObserver = new MutationObserver((recs) => {
+  for (const r of recs) {
+    if (r.type === 'childList') r.addedNodes.forEach(trTree);
+    else if (r.type === 'characterData') { if (r.target.data.trim()) trConsider(trUnit(r.target)); }
+    else if (r.type === 'attributes') trAttr(r.target, r.attributeName);
+  }
+});
+async function startI18n() {
+  document.documentElement.lang = LANG;
+  const sel = document.getElementById('langSel');
+  if (sel) {
+    sel.replaceChildren(...Object.entries(LANGS).map(([k, v]) => h('option', { value: k }, v)));
+    sel.value = LANG;
+    sel.addEventListener('change', () => switchLang(sel.value));
+  }
+  if (I18N.off) return;
+  try { const d = await api(`/api/i18n/dict/${LANG}`); I18N.dict = new Map(Object.entries(d.map || {})); } catch { I18N.dict = new Map(); }
+  trTree(document.body);
+  trObserver.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: TR_ATTRS });
+}
+// The first time a language is used, its screen text is translated before the page reloads
+// (a few seconds). Lessons and cards then translate as you open them, or all at once with
+// "Translate everything now" on the Today page.
+async function switchLang(l) {
+  if (!LANGS[l] || l === LANG) return;
+  remember('lang', l);
+  if (l !== 'en') {
+    const p = h('p', { class: 'muted' }, '…');
+    const veil = h('div', { class: 'trveil', 'data-notr': '' }, h('div', { class: 'box' }, h('strong', {}, LANGS[l]), p));
+    document.body.append(veil);
+    try {
+      const st = await api('/api/i18n/status');
+      if (!(st.cached[l] > 300) && st.enabled) {
+        await api('/api/i18n/prepare', { method: 'POST', body: { lang: l, scope: 'ui' } });
+        for (let i = 0; i < 90; i++) {
+          await new Promise((r) => setTimeout(r, 1500));
+          const s = await api('/api/i18n/status'); const pr = s.prep[l];
+          p.textContent = pr ? `${pr.done} / ${pr.total}` : '…';
+          if (!pr || !pr.running) break;
+        }
+      }
+    } catch { /* the page still works; text translates as it appears */ }
+  }
+  location.reload();
+}
 
 // ---------- glossary tooltips ----------
 // Every abbreviation found in the glossary is underlined; hover (or tap) shows its meaning.
@@ -250,6 +403,38 @@ function openLightbox(list, start) {
 // ---------- views ----------
 const VIEWS = {};
 
+// Today page, other languages: how much is translated, and "Translate everything now".
+async function languageCard() {
+  let st; try { st = await api('/api/i18n/status'); } catch { return null; }
+  const line = h('p', { class: 'muted' });
+  const bar = h('span', {});
+  const show = (s) => {
+    const p = s.prep[LANG], n = p?.running ? p.done : (s.cached[LANG] || 0), total = p?.running ? p.total : s.total;
+    line.textContent = p?.running ? `Translating: ${n} of ${total} texts…` : `${Math.min(n, total)} of ${total} texts translated. The rest translate as you open them.`;
+    bar.style.width = `${pct(Math.min(n, total), total)}%`;
+    if (p?.error) line.textContent = p.error;
+    return p?.running;
+  };
+  const btn = h('button', { class: 'btn primary', type: 'button', disabled: !st.enabled }, 'Translate everything now');
+  const poll = async () => {
+    for (;;) {
+      await new Promise((r) => setTimeout(r, 3000));
+      if (!line.isConnected) return;
+      let s; try { s = await api('/api/i18n/status'); } catch { return; }
+      if (!show(s)) { btn.disabled = false; return; }
+    }
+  };
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    try { await api('/api/i18n/prepare', { method: 'POST', body: { lang: LANG, scope: 'all' } }); poll(); } catch (e) { line.textContent = e.message; btn.disabled = false; }
+  });
+  if (show(st)) { btn.disabled = true; poll(); }
+  return h('div', { class: 'box' }, h('div', { class: 'label' }, 'Language'),
+    h('div', { class: 'row', style: 'justify-content:space-between' }, h('h2', {}, LANGS[LANG]), btn),
+    h('div', { class: 'bar' }, bar), line,
+    st.enabled ? h('p', { class: 'muted' }, 'Do this once before a demo: lessons, cards, quiz, glossary and picture notes are translated in the background (about 10–20 minutes) and then open instantly. Names, codes and the Spanish screen labels stay as they are.')
+      : h('p', { class: 'note' }, 'Translation needs the AI key (ANTHROPIC_API_KEY) in Railway.'));
+}
 VIEWS.dashboard = async () => {
   const [d, stats, plan, lessons] = await Promise.all([api('/api/dashboard'), api('/api/stats'), api('/api/plan'), loadLessons()]);
   const nextSess = plan.find((s) => !s.done_at) || plan[plan.length - 1];
@@ -275,6 +460,7 @@ VIEWS.dashboard = async () => {
       h('div', { class: 'row' }, h('a', { href: '#/ask' }, 'Open Ask AI'), h('a', { href: '#/notes' }, 'My notes'))));
   return [
     work,
+    LANG === 'en' ? null : await languageCard(),
     h('div', {}, h('div', { class: 'label' }, 'Today'), h('h1', {}, d.dueTotal + d.newAvailable > 0 ? `${d.dueTotal + d.newAvailable} cards ready to study` : 'All caught up')),
     h('div', { class: 'grid' },
       h('div', { class: 'box' },
@@ -304,7 +490,7 @@ VIEWS.dashboard = async () => {
           h('div', {}, h('div', { class: 'label' }, nextSess.done_at ? 'All lessons done – review' : 'Your next lesson'), h('h2', {}, `Lesson ${nextSess.idx}: ${nextSess.title}`)),
           h('a', { class: 'btn primary', href: `#/lesson?n=${nextSess.idx}` }, 'Start lesson ▶')),
         h('p', {}, ...txt(nextL.intro)),
-        FIGS.length ? stepThumbs(nextL, 6) : h('p', { class: 'note' }, 'Screenshots are not loaded yet. Upload the five packs on the ', h('a', { href: '#/visuals' }, 'Visuals'), ' page.'))) : null,
+        FIGS.length ? stepThumbs(nextL, 6) : h('p', { class: 'note' }, 'Screenshots are not loaded yet. Upload the six packs on the ', h('a', { href: '#/visuals' }, 'Visuals'), ' page.'))) : null,
     h('div', { class: 'box' },
       h('div', { class: 'row' }, h('a', { href: '#/visuals' }, `Browse all ${FIGS.length} pictures`), h('a', { href: '#/glossary' }, `Glossary (${GLOSSARY.length} abbreviations)`))),
     h('div', { class: 'grid' },
@@ -434,7 +620,7 @@ VIEWS.plan = async () => {
         h('li', {}, 'Click any picture to see it full size.'),
         h('li', {}, 'At the end, answer the check questions out loud before revealing the answers.'),
         h('li', {}, 'Mark the lesson done, then clear that lesson\'s due cards in Review.')),
-      FIGS.length ? null : h('p', { class: 'note' }, 'The screenshots are not loaded yet. Go to ', h('a', { href: '#/visuals' }, 'Visuals'), ' and upload the five packs; the diagrams already work.')),
+      FIGS.length ? null : h('p', { class: 'note' }, 'The screenshots are not loaded yet. Go to ', h('a', { href: '#/visuals' }, 'Visuals'), ' and upload the six packs; the diagrams already work.')),
     ...rows.map((s) => {
       const L = lessons[s.idx];
       const cb = h('input', { type: 'checkbox', id: `plan${s.idx}`, checked: Boolean(s.done_at), 'aria-label': 'Mark done' });
@@ -710,6 +896,23 @@ VIEWS.reference = async () => {
         ['SW', 'Software under contract'], ['HW', 'Hardware under contract'], ['BK', 'Backup execution'], ['EX', 'External to the contract'],
         ['OP', 'Incorrect operation'], ['AD', 'Administration requests'], ['SP', 'Monitoring requests'], ['SL', 'Information / change requests']]),
         h('p', { class: 'muted' }, 'High priority: SW-Database, SW-UT, SW-Matcher, BK-Backup, SW/HW-Storage. Always recategorise to the root cause.')),
+      h('div', { class: 'box' }, h('h2', {}, 'Customer Care (InvGate): numbers to know'), table(null, [
+        ['customercare.iafisgroup.com', 'Address for clients and engineers; IAFIS staff sign in with SSO'],
+        ['3 days', 'Minimum follow-up frequency on every open ticket'], ['5 min', 'Password reset code validity'],
+        ['8 + 2 + 2', 'Password: 8+ characters, upper and lower case, 2 special, 2 numbers'],
+        ['5 business days', 'Ticket closes automatically if the client does not answer the solution'],
+        ['3', 'Priorities: Critical (system down), High (partial), Low (no impact)'], ['13', 'Things every event must record (§7.2)']])),
+      h('div', { class: 'box' }, h('h2', {}, 'Customer Care statuses'), table(['Status', 'Spanish screen', 'SLA'], [
+        ['Open', 'Abierto', 'Running'], ['Unassigned', 'Sin asignar', 'Running'], ['Waiting for the agent', 'En espera del agente', 'Running'],
+        ['Waiting for the client', 'En espera del cliente', 'Paused'], ['Waiting for an external entity', 'En espera a entidad externa', 'Paused'],
+        ['Waiting for a date', 'Esperando una fecha', 'Paused until the date'], ['Resolved', 'Resuelto', 'Waiting for validation'], ['Closed', 'Cerrado', 'Final']]),
+        h('a', { href: '#/practice' }, 'Practise in the simulator ›')),
+      h('div', { class: 'box' }, h('h2', {}, 'Customer Care reply options'),
+        h('ol', { style: 'margin:0;padding-left:18px' },
+          h('li', {}, h('code', {}, 'Responder'), ' adds a comment; tick ', h('code', {}, 'Interno'), ' to hide it from the client'),
+          h('li', {}, h('code', {}, 'Responder y cambiar estado'), ': waiting for the client, an external entity (supplier and its ticket number) or a date agreed with the client'),
+          h('li', {}, h('code', {}, 'Responder y escalar'), ': JPS projects only, Level 2 → 2.5 → Specialists'),
+          h('li', {}, h('code', {}, 'Responder y solucionar'), ': back down the chain, each level validates, then the client accepts or rejects'))),
       h('div', { class: 'box' }, h('h2', {}, 'Escalate to IAFIS Tech in GLPI'),
         h('ol', { style: 'margin:0;padding-left:18px' },
           h('li', {}, 'Switch profile to ', h('code', {}, 'ClienteConsulta nuevo')), h('li', {}, 'Pick the entity, then Create a ticket'),
@@ -844,8 +1047,8 @@ VIEWS.visuals = async () => {
     h('summary', { style: 'cursor:pointer;font-weight:700' }, FIGS.length ? 'Load or replace visuals packs' : 'Step 1: load the pictures (one time)'),
     h('ol', { style: 'margin:0;padding-left:20px' },
       h('li', {}, 'Click "Choose Files" and open your TECHMAN\\visuals-packs folder.'),
-      h('li', {}, 'Select all five .tvpack files (Ctrl+A), then Open.'),
-      h('li', {}, 'Click "Encrypt and upload" and wait for "Done: 533 pictures stored".')),
+      h('li', {}, 'Select all six .tvpack files (Ctrl+A), then Open.'),
+      h('li', {}, 'Click "Encrypt and upload" and wait for "Done: 597 pictures stored".')),
     h('p', { class: 'muted' }, 'Each picture is encrypted with its own key before it is stored, the same as your PDFs. Uploading a pack again replaces its pictures.'),
     h('div', { class: 'row' }, files, go), msg,
     FIGS.length ? h('div', { class: 'row' }, confirmIn, del) : null);
@@ -925,6 +1128,218 @@ VIEWS.security = async () => {
   ];
 };
 
+// =====================================================================
+// Customer Care practice: a working copy of the InvGate ticket screen, a scenario drill
+// and the status map. Everything runs in the browser; only the best drill score is kept
+// (in this browser).
+// =====================================================================
+const CC_ST = {
+  open: { t: 'Open', es: 'Abierto', who: 'Support team', sla: 'run', tone: 'green', what: 'Created by the client; work has not started.' },
+  unassigned: { t: 'Unassigned', es: 'Sin asignar', who: 'Help Desk', sla: 'run', tone: 'grey', what: 'In the Help Desk queue; no engineer yet.' },
+  agent: { t: 'Waiting for the agent', es: 'En espera del agente', who: 'You', sla: 'run', tone: 'blue', what: 'Assigned to an engineer; the next step is ours.' },
+  client: { t: 'Waiting for the client', es: 'En espera del cliente', who: 'Client', sla: 'pause', tone: 'amber', what: 'The client must answer, test or confirm.' },
+  external: { t: 'Waiting for an external entity', es: 'En espera a entidad externa', who: 'Supplier', sla: 'pause', tone: 'amber', what: 'A supplier must act; its ticket number is recorded.' },
+  date: { t: 'Waiting for a date', es: 'Esperando una fecha', who: 'Agreed date', sla: 'pause', tone: 'amber', what: 'Work booked for a date agreed with the client.' },
+  resolved: { t: 'Resolved', es: 'Resuelto', who: 'Client', sla: 'stop', tone: 'purple', what: 'Fix in place; waiting for validation or confirmation.' },
+  closed: { t: 'Closed', es: 'Cerrado', who: '—', sla: 'stop', tone: 'grey', what: 'Validated and fully documented. Final.' },
+};
+const CC_LEVELS = ['Level 2 (you)', 'Level 2.5 (IAFIS Tech)', 'Specialists'];
+const CC_DRILL = [
+  { s: 'You proposed a configuration change and need the client to confirm the station now enrols correctly.', a: 'client', why: 'The next action is the client\'s: "Responder y cambiar estado" → "Esperando al cliente". The SLA pauses and the client is notified.', ref: '§6.2.2' },
+  { s: 'A failed disk is under Dell warranty. Dell opened case 4471 and will ship a part.', a: 'external', why: '"Esperando entidad externa": select the supplier and record its ticket number (mandatory).', ref: '§6.2.2' },
+  { s: 'The client agreed to a maintenance window on Saturday at 22:00 to restart the database.', a: 'date', why: '"Esperando una fecha" with the agreed date and time. The SLA pauses until then.', ref: '§6.2.2' },
+  { s: 'Your team is busy and nobody can look at the ticket until next Tuesday.', a: 'reply', why: 'Not "Esperando una fecha": that is only for a date agreed with the client. Add a follow-up and, if the SLA will be exceeded, give the client an estimate.', ref: '§7.2' },
+  { s: 'On a JPS project you have done everything Level 2 can do; IAFIS Tech must look at it.', a: 'escalate', why: '"Responder y escalar": Level 2 → 2.5. Record the diagnosis, activities, evidence and the reason first.', ref: '§6.2.2' },
+  { s: 'You applied the fix, tested it and documented the evidence. The ticket is at Level 2.', a: 'solve', why: '"Responder y solucionar": validate and inform the client, who accepts (Closed) or rejects (Open).', ref: '§6.2.2' },
+  { s: 'You want to note internal analysis from IAFIS Tech that the client should not see, without changing the status.', a: 'reply', why: 'Plain "Responder" with "Interno" ticked: internal comments are hidden from the client.', ref: '§6.2.1' },
+  { s: 'The client marked a single slow enrolment station as Critical; the rest of the system works.', a: 'priority', why: 'Partial impact is High, not Critical. ⋮ "Más opciones" → "Editar" → "Prioridad", backed by your analysis.', ref: '§7.1.1' },
+  { s: 'You find the root cause is a network fault, but the ticket was logged under an application category.', a: 'category', why: 'Recategorise to the root cause: ⋮ → "Editar" → "Categoría".', ref: '§7.1.2' },
+  { s: 'You need the client\'s firewall logs before you can continue.', a: 'client', why: 'Asking for information means "Esperando al cliente": the next action is theirs.', ref: '§6.2.2' },
+  { s: 'A new ticket for your Help Desk appears under "Sin asignar" and it is yours to take under the SDM\'s rules.', a: 'assign', why: 'Gear icon → "Asignar a mí". It moves to "Asignados a mí" and leaves the others\' queue.', ref: '§6.1' },
+  { s: 'IAFIS Tech solved the problem and pressed "Responder y solucionar". Where does the ticket go?', a: 'back', why: 'Back to the previous level (Level 2, you), who validates the fix before telling the client.', ref: '§6.2.2' },
+];
+const CC_ACTIONS = {
+  assign: 'Gear → Asignar a mí', reply: 'Responder', client: 'Responder y cambiar estado → Esperando al cliente',
+  external: 'Responder y cambiar estado → Esperando entidad externa', date: 'Responder y cambiar estado → Esperando una fecha',
+  escalate: 'Responder y escalar', solve: 'Responder y solucionar', priority: '⋮ → Editar → Prioridad', category: '⋮ → Editar → Categoría',
+  back: 'Reassigned to the previous level to validate',
+};
+const slaText = (s) => (s === 'run' ? '▶ SLA running' : s === 'pause' ? '⏸ SLA paused' : '■ SLA stopped');
+function ccStatusMap(active, onPick) {
+  return h('div', { class: 'ccmap' }, Object.entries(CC_ST).map(([k, s]) =>
+    h('button', { type: 'button', class: `ccst tone-${s.tone}${k === active ? ' on' : ''}`, onclick: () => onPick && onPick(k) },
+      h('strong', {}, s.t), h('span', { class: 'muted' }, `"${s.es}"`), h('span', { class: `ccsla ${s.sla}` }, slaText(s.sla)))));
+}
+
+VIEWS.practice = async () => {
+  // ---------- 1. the ticket simulator ----------
+  const T = { status: 'unassigned', level: 0, owner: null, priority: 'Critical', project: 'JPS', sla: 0, log: [], supplier: '', supTicket: '', date: '' };
+  const pr = { Critical: 'bad', High: 'warn', Low: 'good' };
+  const say = (who, text, kind = '') => { T.log.unshift({ at: new Date(), who, text, kind }); };
+  say('System', 'Ticket #2318 created by the client: "Enrolment station 3 cannot send records" (Critical).', 'sys');
+  say('System', 'Email sent to every engineer in the Help Desk.', 'sys');
+  const card = h('div', { class: 'box ccticket' });
+  const comment = h('textarea', { rows: 3, id: 'ccComment', placeholder: 'Document what you did: diagnosis, checks, evidence, results…' });
+  const interno = h('input', { type: 'checkbox', id: 'ccInterno' });
+  const msg = h('div', { class: 'ccmsg', role: 'status' });
+  const mapHolder = h('div', {});
+  const stInfo = h('div', { class: 'ccstinfo muted' }, 'Click a status to see what it means.');
+  const warn = (t) => { msg.className = 'ccmsg bad'; msg.textContent = t; };
+  const okm = (t) => { msg.className = 'ccmsg good'; msg.textContent = t; };
+  const needDoc = () => {
+    if (T.owner !== 'you') { warn('Take the ticket first: gear icon → "Asignar a mí".'); return false; }
+    if (comment.value.trim().length < 15) { warn('Document the work first: before changing status, record what you did and attach the evidence (§6.2.1).'); comment.focus(); return false; }
+    return true;
+  };
+  const post = (label) => { say(interno.checked ? 'You (internal)' : 'You', `${label}: ${comment.value.trim()}`, interno.checked ? 'int' : 'you'); comment.value = ''; };
+  const act = {
+    assign() {
+      if (T.owner === 'you') return okm('It is already yours, under "Asignados a mí".');
+      T.owner = 'you'; T.status = 'agent'; say('System', 'Assigned to you. The ticket left the other engineers\' "Sin asignar" list.', 'sys');
+      return okm('Assigned to you. Status: Waiting for the agent.');
+    },
+    reply() { if (!needDoc()) return; post('Responder'); okm(interno.checked ? 'Internal comment saved: the client cannot see it.' : 'Public comment saved: the client is notified.'); },
+    client() { if (!needDoc()) return; post('Esperando al cliente'); T.status = 'client'; say('System', 'Email to the client and to the Help Desk: status changed. SLA paused.', 'sys'); okm('Waiting for the client. The SLA is paused until they reply.'); },
+    external() {
+      if (!needDoc()) return;
+      if (!T.supplier || T.supTicket.trim().length < 2) { warn('Open "Fields for external entity and date": select the supplier and type the supplier\'s ticket number. It is mandatory (§6.2.2).'); return; }
+      post(`Esperando entidad externa (${T.supplier} #${T.supTicket.trim()})`); T.status = 'external';
+      say('System', `External entity ${T.supplier}, case ${T.supTicket.trim()}. SLA paused.`, 'sys'); okm('Waiting for an external entity, with the supplier\'s ticket number recorded.');
+    },
+    date() {
+      if (!needDoc()) return;
+      if (!T.date) { warn('Open "Fields for external entity and date" and pick the date and time agreed with the client.'); return; }
+      post(`Esperando una fecha (${T.date.replace('T', ' ')})`); T.status = 'date';
+      say('System', 'Email to the client and the Help Desk. SLA paused until the agreed date.', 'sys'); okm('Waiting for a date. Use it only for a date agreed with the client.');
+    },
+    escalate() {
+      if (!needDoc()) return;
+      if (T.project !== 'JPS') { warn('"Responder y escalar" is only for JPS projects. Follow the procedure agreed with the supplier instead (§7.2).'); return; }
+      if (T.level >= 2) { warn('The Specialists are the last level in this flow.'); return; }
+      post('Responder y escalar'); T.level += 1; T.status = 'agent';
+      say('System', `Escalated to ${CC_LEVELS[T.level]}. They continue from the point where it was escalated.`, 'sys');
+      okm(`Now with ${CC_LEVELS[T.level]}. You are playing that level now.`);
+    },
+    solve() {
+      if (!needDoc()) return;
+      post('Responder y solucionar');
+      if (T.level > 0) { T.level -= 1; T.status = 'agent'; say('System', `Solution sent back to ${CC_LEVELS[T.level]} to validate.`, 'sys'); okm('Each level validates before passing it on. Validate the fix, then solve again.'); return; }
+      T.status = 'resolved'; say('System', 'Email to the client: proposed solution. They can accept or reject it.', 'sys'); okm('Resolved. Now play the client: accept or reject below.');
+    },
+    accept() { T.status = 'closed'; say('Client', 'Accepted the solution and rated the support ★★★★★.', 'cli'); okm('Closed. The work on this ticket is complete.'); },
+    reject() { T.status = 'open'; say('Client', 'Rejected the solution: "Station 3 still fails after 10 minutes."', 'cli'); warn('Rejected: the ticket is back to Open. Keep working on it.'); },
+    priority(v) {
+      if (T.owner !== 'you') return warn('Take the ticket first.');
+      if (v === T.priority) return okm('That is already the priority.');
+      say('System', `Priority changed from ${T.priority} to ${v} after analysis (Priority Matrix, Annex 4).`, 'sys'); T.priority = v;
+      return okm('Priority updated. Note the reason in a comment.');
+    },
+  };
+  const closeMenu = (e) => { const d = e.target.closest('details'); if (d) d.open = false; };
+  const doAct = (name, arg) => (e) => { act[name](arg); closeMenu(e); draw(); };
+  function showSt(k) {
+    const s = CC_ST[k];
+    stInfo.replaceChildren(h('strong', {}, `${s.t} ("${s.es}"): `), s.what, ' ', h('span', { class: `ccsla ${s.sla}` }, slaText(s.sla)), ' ', `Next action: ${s.who}.`);
+  }
+  function draw() {
+    const s = CC_ST[T.status];
+    const supplier = h('select', { id: 'ccSup', onchange: (e) => { T.supplier = e.target.value; } },
+      ['', 'Dell', 'HP', 'IDEMIA Hotline', 'Softplan', 'Otra entidad externa'].map((x) => h('option', { value: x }, x || '— supplier —')));
+    supplier.value = T.supplier;
+    const supT = h('input', { type: 'text', id: 'ccSupT', placeholder: 'Supplier ticket number', value: T.supTicket, oninput: (e) => { T.supTicket = e.target.value; } });
+    const dt = h('input', { type: 'datetime-local', id: 'ccDate', value: T.date, onchange: (e) => { T.date = e.target.value; } });
+    const menu = h('div', { class: 'ccmenu' },
+      h('button', { class: 'btn', type: 'button', onclick: doAct('reply') }, 'Responder'),
+      h('details', { class: 'ccdrop' }, h('summary', { class: 'btn' }, 'Responder y cambiar estado ▾'),
+        h('div', { class: 'ccdropbody' },
+          h('button', { class: 'btn', type: 'button', onclick: doAct('client') }, 'Esperando al cliente'),
+          h('button', { class: 'btn', type: 'button', onclick: doAct('external') }, 'Esperando entidad externa'),
+          h('button', { class: 'btn', type: 'button', onclick: doAct('date') }, 'Esperando una fecha'))),
+      h('button', { class: 'btn', type: 'button', onclick: doAct('escalate') }, 'Responder y escalar'),
+      h('button', { class: 'btn primary', type: 'button', onclick: doAct('solve') }, 'Responder y solucionar'));
+    card.replaceChildren(
+      h('div', { class: 'lhead' },
+        h('div', {}, h('div', { class: 'label' }, 'Customer Care · Mi trabajo › #2318'), h('h2', {}, 'Enrolment station 3 cannot send records')),
+        h('div', { class: 'row' },
+          T.owner ? h('span', { class: 'pill good' }, 'Asignados a mí') : h('button', { class: 'btn', type: 'button', title: 'Gear icon (settings)', onclick: doAct('assign') }, '⚙ Asignar a mí'),
+          h('details', { class: 'ccdrop right' }, h('summary', { class: 'btn', title: 'Más opciones' }, '⋮ Editar'),
+            h('div', { class: 'ccdropbody' }, h('div', { class: 'label' }, 'Prioridad'),
+              ['Critical', 'High', 'Low'].map((p) => h('button', { class: 'btn', type: 'button', onclick: doAct('priority', p) }, p)))))),
+      h('div', { class: 'ccfacts' },
+        h('div', {}, h('div', { class: 'label' }, 'Status'), h('span', { class: `ccbig tone-${s.tone}` }, s.t), h('div', { class: 'muted' }, `"${s.es}"`)),
+        h('div', {}, h('div', { class: 'label' }, 'Next action'), h('strong', {}, s.who)),
+        h('div', {}, h('div', { class: 'label' }, 'Priority'), h('span', { class: `pill ${pr[T.priority]}` }, T.priority)),
+        h('div', {}, h('div', { class: 'label' }, 'Level'), h('strong', {}, T.owner ? CC_LEVELS[T.level] : 'Help Desk queue')),
+        h('div', {}, h('label', { class: 'label', for: 'ccProj' }, 'Project'),
+          h('select', { id: 'ccProj', onchange: (e) => { T.project = e.target.value; } }, ['JPS', 'Other project'].map((x) => h('option', { value: x, selected: T.project === x }, x)))),
+        h('div', { class: 'ccslabox' }, h('div', { class: 'label' }, 'Resolution SLA'),
+          h('div', { class: `bar${s.sla === 'run' ? '' : ' paused'}` }, h('span', { id: 'ccSlaBar', style: `width:${Math.min(100, T.sla)}%` })),
+          h('div', { class: `ccsla ${s.sla}` }, slaText(s.sla)))),
+      h('label', { class: 'field' }, 'Comment', comment),
+      h('div', { class: 'row' }, h('label', { class: 'ccint', for: 'ccInterno' }, interno, ' Interno (hidden from the client)')),
+      h('div', { class: 'row' }, h('span', { class: 'muted' }, 'Reply options:'), menu),
+      h('details', { class: 'ccfields' }, h('summary', { class: 'muted' }, 'Fields for external entity and date'),
+        h('div', { class: 'row' }, h('label', { class: 'field' }, 'External entity', supplier), h('label', { class: 'field' }, 'TKT de Entidad Externa', supT), h('label', { class: 'field' }, 'Fecha / Hora', dt))),
+      T.status === 'resolved' ? h('div', { class: 'row ccclient' }, h('strong', {}, 'You are now the client:'),
+        h('button', { class: 'btn good', type: 'button', onclick: doAct('accept') }, 'Accept the solution'),
+        h('button', { class: 'btn bad', type: 'button', onclick: doAct('reject') }, 'Reject it')) : null,
+      msg,
+      h('div', { class: 'cclog' }, h('div', { class: 'label' }, 'Ticket history'), T.log.slice(0, 14).map((l) => h('div', { class: `ccline ${l.kind}`, 'data-notr': ['you', 'int'].includes(l.kind) ? '' : null },
+        h('span', { class: 'muted mono' }, l.at.toLocaleTimeString(LOCALES[LANG], { hour: '2-digit', minute: '2-digit', second: '2-digit' })), ' ', h('strong', {}, l.who), ' ', l.text))),
+      h('div', { class: 'row' }, h('button', { class: 'btn', type: 'button', onclick: () => render() }, '↺ Start again'),
+        h('span', { class: 'muted' }, 'Try changing the status before taking the ticket, or waiting for a supplier without its ticket number.')));
+    mapHolder.replaceChildren(ccStatusMap(T.status, showSt));
+  }
+  // The SLA bar fills while the clock runs, so a pause is visible at a glance.
+  const timer = setInterval(() => {
+    if (!card.isConnected) { if (T.drawn) clearInterval(timer); return; }
+    T.drawn = true;
+    if (CC_ST[T.status].sla === 'run' && T.sla < 100) { T.sla += 0.5; const b = document.getElementById('ccSlaBar'); if (b) b.style.width = `${Math.min(100, T.sla)}%`; }
+  }, 400);
+
+  // ---------- 2. scenario drill ----------
+  const drill = h('div', { class: 'box' });
+  const order = [...CC_DRILL.keys()].sort(() => Math.random() - 0.5);
+  let qi = 0, score = 0;
+  const best = Number(recall('ccDrillBest', '0'));
+  function drawDrill() {
+    if (qi >= order.length) {
+      const p = pct(score, order.length);
+      if (p > best) remember('ccDrillBest', String(p));
+      drill.replaceChildren(h('h2', {}, 'Drill complete'), h('div', { class: 'stat' }, `${score}/${order.length}`),
+        h('p', {}, p >= 85 ? 'Target met (85%). You know the Customer Care reply options.' : 'Below the 85% target. Run it again, then reread lesson 11.'),
+        h('div', { class: 'row' }, h('button', { class: 'btn primary', type: 'button', onclick: () => { order.sort(() => Math.random() - 0.5); qi = 0; score = 0; drawDrill(); } }, 'Run it again'),
+          h('a', { class: 'btn', href: '#/lesson?n=11' }, 'Open lesson 11')));
+      return;
+    }
+    const d = CC_DRILL[order[qi]];
+    const fb = h('div', { class: 'ccfb' });
+    const keys = Object.keys(CC_ACTIONS).filter((k) => k !== 'back' || d.a === 'back');
+    const buttons = keys.map((k) => h('button', { type: 'button', 'data-k': k, onclick: (e) => {
+      if (fb.dataset.done) return; fb.dataset.done = '1';
+      const right = k === d.a; if (right) score++;
+      drill.querySelectorAll('.opts button').forEach((b) => { if (b.dataset.k === d.a) b.classList.add('right'); else if (b === e.currentTarget) b.classList.add('wrong'); });
+      fb.replaceChildren(h('p', { class: right ? 'ok' : 'error' }, right ? 'Correct.' : 'Not quite.'), h('p', {}, ...txt(d.why)), h('p', { class: 'muted' }, `Customer Care manual ${d.ref}`),
+        h('button', { class: 'btn primary', type: 'button', onclick: () => { qi++; drawDrill(); } }, qi + 1 < order.length ? 'Next scenario ›' : 'See the result'));
+    } }, CC_ACTIONS[k]));
+    drill.replaceChildren(
+      h('div', { class: 'lhead' }, h('h2', {}, 'Scenario drill: pick the right action'),
+        h('span', { class: 'pill' }, `${qi + 1} / ${order.length} · ${score} correct${best ? ` · best ${best}%` : ''}`)),
+      h('p', { class: 'ccscen' }, ...txt(d.s)), h('div', { class: 'opts' }, buttons), fb);
+  }
+  draw(); drawDrill(); showSt(T.status);
+  const ccFigs = figsFor(['CC:6.1', 'CC:6.2', 'CC:7.1']);
+  return [
+    h('div', { class: 'lhead' }, h('div', {}, h('div', { class: 'label' }, 'Customer Care (InvGate) · practice'), h('h1', {}, 'Work a ticket without risk')),
+      h('div', { class: 'row' }, h('a', { class: 'btn', href: '#/lesson?n=11' }, 'Lesson 11'), h('a', { class: 'btn', href: '#/lesson?n=12' }, 'Lesson 12'))),
+    h('p', { class: 'muted' }, 'A working copy of the Customer Care ticket screen. Take the ticket, document the work, change the status, escalate and solve, and watch the status, the next action and the SLA clock change exactly as the manual says they should.'),
+    h('div', { class: 'box' }, h('h2', {}, 'The eight statuses'), mapHolder, stInfo),
+    card,
+    drill,
+    ccFigs.length ? h('div', { class: 'box' }, h('h2', {}, 'The real screens'), figStrip(ccFigs, { max: 12 })) : null,
+  ];
+};
+
 // ---------- router ----------
 function alertInline(e) { view.prepend(errorBox(e)); }
 
@@ -933,7 +1348,7 @@ async function render() {
   const fn = VIEWS[name] || VIEWS.dashboard;
   document.querySelectorAll('#tabs a').forEach((a) => {
     const tab = name === 'lesson' ? 'plan' : name;
-    view.classList.toggle('wide', ['lesson', 'visuals', 'plan', 'ask', 'issue', 'notes'].includes(name));
+    view.classList.toggle('wide', ['lesson', 'visuals', 'plan', 'ask', 'issue', 'notes', 'practice'].includes(name));
     if (a.getAttribute('href') === `#/${tab}`) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   });
   try {
@@ -959,7 +1374,7 @@ async function updateInboxBadge() {
 }
 setInterval(() => { if (!document.hidden) updateInboxBadge(); }, 60000);
 async function loadFigures() { try { FIGS = await api('/api/figures'); } catch { FIGS = []; } }
-Promise.all([api('/api/meta'), api('/api/glossary').catch(() => []), loadFigures()])
+Promise.all([api('/api/meta'), api('/api/glossary').catch(() => []), loadFigures(), startI18n()])
   .then(([m, g]) => { META = m; GLOSSARY = g; buildAbbr(); aiStatus().catch(() => {}).finally(render); updateInboxBadge(); })
   .catch((e) => view.replaceChildren(errorBox(e)));
 
@@ -1020,10 +1435,10 @@ function aiText(text, cites = []) {
     const bullet = line.match(/^[-•*]\s+(.*)$/), num = line.match(/^(\d+)[.)]\s+(.*)$/);
     if (bullet || num) {
       const k = bullet ? 'ul' : 'ol';
-      if (kind !== k) { flush(); list = h(k, {}); kind = k; }
+      if (kind !== k) { flush(); list = h(k, { 'data-notr': '' }); kind = k; }
       const body = bullet ? bullet[1] : num[2];
       list.append(h('li', { class: body.startsWith('⚠') ? 'warnline' : '' }, ...aiInline(body, cites)));
-    } else { flush(); blocks.push(h('p', { class: line.startsWith('⚠') ? 'warnline' : '' }, ...aiInline(line, cites))); }
+    } else { flush(); blocks.push(h('p', { class: line.startsWith('⚠') ? 'warnline' : '', 'data-notr': '' }, ...aiInline(line, cites))); }
   }
   flush();
   return blocks;
@@ -1069,7 +1484,7 @@ function aiSetup(st, offerReplace = false) {
     if (st.pack) return h('details', { class: 'box' }, h('summary', { class: 'muted', style: 'cursor:pointer' }, `Knowledge pack: ${st.pack.chunks} sections + ${st.loaded?.notes || 0} of your notes. Replace it with a newer pack…`),
       h('div', { class: 'row' }, file, go), msg);
     return h('div', { class: 'box uploadfirst' }, h('h2', {}, 'Set up: load the knowledge pack (one time)'),
-      h('p', {}, 'Choose ', h('code', {}, 'techman-knowledge.tkpack'), ' from your TECHMAN\\ai-pack folder. It holds the text of all 31 documents, so the AI can search them. It is encrypted before it is stored, like your PDFs.'),
+      h('p', {}, 'Choose ', h('code', {}, 'techman-knowledge.tkpack'), ' from your TECHMAN\\ai-pack folder. It holds the text of all 34 documents, so the AI can search them. It is encrypted before it is stored, like your PDFs.'),
       h('div', { class: 'row' }, file, go), msg);
   }
   return null;
@@ -1085,7 +1500,7 @@ const ASK = { thread: [] };
 VIEWS.ask = async () => {
   const st = await aiStatus(true);
   const setup = aiSetup(st, true);
-  const thread = h('div', { class: 'aithread' });
+  const thread = h('div', { class: 'aithread', 'data-notr': '' });
   const box = h('textarea', { id: 'askBox', rows: 3, placeholder: 'Ask anything about the system or the procedures, e.g. "How do I check which MBSS services are running?"' });
   const scope = docFilterSelect('askDoc');
   const btn = h('button', { class: 'btn primary', type: 'button' }, 'Ask ▶');
@@ -1120,7 +1535,7 @@ VIEWS.ask = async () => {
     h('div', { class: 'lhead' }, h('div', {}, h('div', { class: 'label' }, `AI tutor · ${st.model} · ${st.usedToday}/${st.dailyLimit} today`), h('h1', {}, 'Ask your documents')),
       h('div', { class: 'row' }, aiTestBtn(), ASK.thread.length ? h('button', { class: 'btn', type: 'button', onclick: () => { ASK.thread = []; render(); } }, 'New conversation') : null)),
     setup,
-    h('p', { class: 'muted' }, 'Answers use only your 31 documents and cite them [1], [2]… Click a number to see the passage. Risky actions are marked ⚠.'),
+    h('p', { class: 'muted' }, 'Answers use only your 34 documents and cite them [1], [2]… Click a number to see the passage. Risky actions are marked ⚠.'),
     thread,
     st.enabled && st.pack ? h('div', { class: 'box askbar' }, box,
       h('div', { class: 'row' }, h('label', { for: 'askDoc', class: 'label' }, 'Search in'), scope, btn, status),
@@ -1143,9 +1558,9 @@ VIEWS.issue = async () => {
   const tried = h('textarea', { id: 'isTried', rows: 2, placeholder: 'What has been tried already (optional)' });
   const fill = (x) => { symptom.value = x.symptom || ''; site.value = x.site || 'Not sure'; if (site.value === '') site.value = 'Not sure'; when.value = x.when || ''; tried.value = x.tried || ''; };
   if (ISSUE.input) fill(ISSUE.input);
-  const fromBadge = h('div', { class: 'frominbox', hidden: true });
+  const fromBadge = h('div', { class: 'frominbox', hidden: true, 'data-notr': '' });
   let formBox = null;
-  const out = h('div', { class: 'issueout' });
+  const out = h('div', { class: 'issueout', 'data-notr': '' });
   const status = h('span', { class: 'muted' });
   const btn = h('button', { class: 'btn primary', type: 'button' }, 'Build my plan ▶');
   const examples = [
@@ -1269,7 +1684,7 @@ VIEWS.issue = async () => {
   }
 
   // ---------- Issue inbox ----------
-  const inboxList = h('div', { class: 'inboxlist' });
+  const inboxList = h('div', { class: 'inboxlist', 'data-notr': '' });
   const inboxHead = h('span', { class: 'muted' });
   const auto = h('input', { type: 'checkbox', id: 'autoplan' });
   auto.addEventListener('change', async () => { try { await api('/api/inbox/settings', { method: 'POST', body: { autoplan: auto.checked } }); } catch (e) { inboxHead.textContent = e.message; } });
@@ -1372,7 +1787,7 @@ VIEWS.notes = async () => {
   const kind = h('select', { id: 'nKind' }, h('option', { value: 'note' }, 'Note'), h('option', { value: 'fix' }, 'Fix'));
   const msg = h('span', { class: 'muted' });
   const filter = h('input', { type: 'search', placeholder: 'Filter…', id: 'nFilter' });
-  const list = h('div', { class: 'notelist' });
+  const list = h('div', { class: 'notelist', 'data-notr': '' });
   const draw = () => {
     const f = filter.value.toLowerCase();
     list.replaceChildren(...notes.filter((n) => !f || `${n.title} ${n.text}`.toLowerCase().includes(f)).map((n) => h('div', { class: 'box' },
@@ -1418,7 +1833,7 @@ function aiQuizBox() {
   const doc = docFilterSelect('aqDoc', null);
   doc.value = recall('aqDoc', 'A3A');
   const topic = h('input', { type: 'text', id: 'aqTopic', placeholder: 'Topic (optional), e.g. tablespace, backup, STS' });
-  const out = h('div', { style: 'display:flex;flex-direction:column;gap:12px' });
+  const out = h('div', { style: 'display:flex;flex-direction:column;gap:12px', 'data-notr': '' });
   const status = h('span', { class: 'muted' });
   const btn = h('button', { class: 'btn primary', type: 'button', onclick: async () => {
     remember('aqDoc', doc.value);

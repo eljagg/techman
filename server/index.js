@@ -15,6 +15,7 @@ import { ai, initAi } from './routes/ai.js';
 import { notes } from './routes/notes.js';
 import { nettm } from './routes/nettm.js';
 import { inbox, inboxHook } from './routes/inbox.js';
+import { i18n, langMiddleware } from './i18n.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const clientDir = path.join(here, '..', 'client');
@@ -66,7 +67,8 @@ app.use('/hook/inbox', inboxHook);
 // Layer 1: every other request must carry a valid Cloudflare Access token.
 app.use(cfAccess());
 const jsonSmall = express.json({ limit: '100kb' }), jsonLarge = express.json({ limit: '4mb' });
-app.use((req, res, next) => (req.path === '/api/inbox/import' ? jsonLarge : jsonSmall)(req, res, next));
+app.use((req, res, next) => (req.path === '/api/inbox/import' || req.path === '/api/i18n/translate' ? jsonLarge : jsonSmall)(req, res, next));
+app.use(langMiddleware);
 app.use(csrfGuard());
 
 // Public within Access: login page and its assets.
@@ -92,6 +94,7 @@ app.use('/api/ai', ai);
 app.use('/api/notes', notes);
 app.use('/api/inbox', inbox);
 app.use('/api/nettm', nettm);
+app.use('/api/i18n', i18n);
 app.use('/api', study);
 app.use('/app', express.static(path.join(clientDir, 'app'), { index: false, maxAge: '30d', immutable: true }));
 app.get('/', (req, res) => res.type('html').send(APP_HTML));

@@ -4486,3 +4486,7 @@ export const GLOSSARY = [
 "source": "standard"
 }
 ];
+
+// Customer Care (InvGate) additions.
+import { patchGlossary } from './customercare.js';
+patchGlossary(GLOSSARY);

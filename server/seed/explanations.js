@@ -4952,3 +4952,7 @@ export const EXPLAIN = {
 ]
 }
 };
+
+// Customer Care (InvGate) pictures.
+import { EXPLAIN_CC } from './explanations_cc.js';
+Object.assign(EXPLAIN, EXPLAIN_CC);

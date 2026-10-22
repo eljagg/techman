@@ -1,7 +1,8 @@
 # Techman: study portal
 
-Private, single-user study portal for GLPI manuals and incident escalation
-procedures. Node 22 + Express + Postgres on Railway, behind Cloudflare Access.
+Private, single-user study portal for the GLPI and Customer Care (InvGate) manuals,
+incident escalation procedures and the MBIS administrator training, in English,
+Spanish, Portuguese or French. Node 22 + Express + Postgres on Railway, behind Cloudflare Access.
 
 ## 1. Security model
 
@@ -45,6 +46,8 @@ Limits to be aware of:
 | `ALLOWED_EMAIL` | the one email allowed by your Access policy |
 
 AI (optional): `ANTHROPIC_API_KEY` (switches AI on), `AI_MODEL` (claude-sonnet-5-5), `AI_TRIAGE_MODEL` (claude-haiku-5-5, reads inbox emails), `AI_DAILY_LIMIT` (150 requests per day).
+
+Languages (optional): `AI_TRANSLATE_MODEL` (defaults to the triage model), `TRANSLATE_DAILY_LIMIT` (600 translation calls per day).
 
 nettm link (optional, see the nettm request document): `NETTM_URL` (nettm backend address), `NETTM_SECRET` (same value as `TECHMAN_SHARED_SECRET` in nettm), and `NETTM_CF_CLIENT_ID` / `NETTM_CF_CLIENT_SECRET` only if nettm is behind Cloudflare Access. With these set, plans show **⇪ Send to nettm**.
 
@@ -95,7 +98,7 @@ Sign in → Documents → upload each Spanish original and each English translat
 
 ## 5. Visuals and glossary
 - **Visuals** shows the pictures from the documents: GLPI screenshots, the JCF site guides, the AV design, every administrator training deck and the Face Expert training. They also appear inside Plan sessions, on Review cards (after you show the answer), on Today and on Reference.
-- Pictures are loaded from `.tvpack` files on the Visuals page. Each picture and its thumbnail is encrypted with its own data key, wrapped by `FILE_MASTER_KEY`, exactly like the PDFs. The packs are not stored in GitHub.
+- Pictures are loaded from `.tvpack` files on the Visuals page (six packs; pack 6 is Customer Care). Each picture and its thumbnail is encrypted with its own data key, wrapped by `FILE_MASTER_KEY`, exactly like the PDFs. The packs are not stored in GitHub.
 - **Glossary** lists every abbreviation found in the documents. The same abbreviations are underlined on cards, quiz questions and plan items; hover or tap one to see its meaning.
 
 ## 6. AI tutor and issue helper
@@ -128,3 +131,18 @@ Seeded cards and questions live in `server/seed/content.js`. Edit and redeploy t
 
 ## 9. Local development
 Use a local Postgres and set `CF_ACCESS_DISABLED=true` (refused when `NODE_ENV=production`).
+
+## 10. Customer Care (InvGate)
+- IAFIS's new ticket platform, https://customercare.iafisgroup.com. Three documents: the technical support manual (OPS-IS-MAN-003, Spanish original and English translation), the client user manual (OPS-IT-MAN-APP-001) and the password reset guide.
+- Lessons 10–12 cover it (client side, working a ticket, policies and statuses); lesson 13 is the end-to-end review in both GLPI and Customer Care. Lessons 1, 2 and 5 end with a short "in Customer Care" step.
+- Cards and quiz questions are in the "Customer Care (InvGate)" deck.
+- **Practice** (Learn menu): a working copy of the Customer Care ticket screen. Take the ticket, document, change status, escalate, solve, and play the client. The status, the next action and the SLA clock behave as the manual says. Below it is a 12-scenario drill.
+- Reference has the Customer Care numbers, statuses and reply options.
+
+## 11. Languages
+- The selector at the top right switches the whole portal between English, Español, Português and Français. The choice is kept in this browser.
+- The first switch to a language translates the screen text (a few seconds). Lessons, cards, quiz, glossary and picture notes translate as you open them, or all at once with **Translate everything now** on the Today page (do this before a demo).
+- Translations are made once by Claude (the fast model) and kept in Postgres (`i18n_cache`), so each text is paid for once per language.
+- AI answers, issue plans and AI quiz questions are written directly in the chosen language. Questions asked in another language are turned into English before the documents are searched.
+- Your notes, inbox emails and AI answers are never sent for translation or stored in the translation cache, because they are encrypted at rest.
+- Spanish screen labels (GLPI, Customer Care), names, codes and commands stay as they are in every language.

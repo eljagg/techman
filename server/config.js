@@ -54,6 +54,8 @@ export const config = {
     baseUrl: (env.AI_BASE_URL || 'https://api.anthropic.com').trim().replace(/\/$/, ''),
     dailyLimit: Number(env.AI_DAILY_LIMIT || 150),
     triageModel: (env.AI_TRIAGE_MODEL || 'claude-haiku-5-5').trim(),
+    translateModel: (env.AI_TRANSLATE_MODEL || env.AI_TRIAGE_MODEL || 'claude-haiku-5-5').trim(),
+    translateDailyLimit: Number(env.TRANSLATE_DAILY_LIMIT || 600),
   },
   nettm: { url: process.env.NETTM_URL || '', secret: process.env.NETTM_SECRET || '', cfId: process.env.NETTM_CF_CLIENT_ID || '', cfSecret: process.env.NETTM_CF_CLIENT_SECRET || '' },
   inbox: {
