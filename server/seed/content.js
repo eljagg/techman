@@ -2,16 +2,12 @@
 //   T = GLPI User Manual – Technical Support (OPS-I&S-MAN-001 V00.05)
 //   C = GLPI User Manual – Clients (OPS-SOP-MAN-002 V00.04)
 //   E = Incident Management and Case Escalation Procedures (v1.0)
-//   CC = Customer Care (InvGate) manuals: see customercare.js
 // Seeded rows are upserted by key on every start; edit wording here and redeploy.
-
-import { CC_PLAN, CC_RAW_CARDS, CC_RAW_QUIZ } from './customercare.js';
 
 export const DOC_NAMES = {
   T: 'Technical support manual',
   C: 'Client manual',
   E: 'Escalation procedures',
-  CC: 'Customer Care (InvGate)',
 };
 
 export const PLAN = [
@@ -42,11 +38,10 @@ export const PLAN = [
   { idx: 9, doc: 'Escalation procedures', secs: '§11–16', title: 'Minimum information and the rules of contact',
     items: ['Error categories and the minimum-information table', 'The Jamaica JCF firewall incident report as a model', 'VPN request form and approval', 'Communication restrictions: end client, France, Technical Authority', 'Complaint escalation via the Local Coordinator (SDM)'],
     goal: 'Write an incident report in the JCF example format.', figs: ['key:RSG-p037-1'] },
-  { idx: 13, doc: 'All documents', secs: 'Review', title: 'Put it together',
-    items: ['Walk one real incident end to end: client ticket → triage → documentation → escalation → close', 'Run the same incident in Customer Care: Assign to me → waiting statuses → Reply and solve → client confirms', 'Clear every card that is due', 'Scenario quiz on all documents; target 85%', 'List open questions for your coordinator'],
-    goal: 'Handle a ticket start to finish without the manuals.', figs: ['key:RSG-p037-1', 'key:AVR-fig2', 'T:5.4', 'key:CC-p022-1'] },
-  ...CC_PLAN,
-].sort((a, b) => a.idx - b.idx);
+  { idx: 10, doc: 'All three', secs: 'Review', title: 'Put it together',
+    items: ['Walk one imaginary incident end to end: client ticket → triage → documentation → escalation → close', 'Clear every card that is due', 'Scenario quiz on all documents; target 85%', 'List open questions for your coordinator'],
+    goal: 'Handle a ticket start to finish without the manuals.', figs: ['key:RSG-p037-1', 'key:AVR-fig2', 'T:5.4'] },
+];
 
 const RAW_CARDS = [
   ['T','§2','Can you start work on a problem before a GLPI case exists?','Only in exceptional urgent situations (very critical issues or GLPI unavailable). Diagnosis may begin, but the client must create the case as soon as possible.'],
@@ -111,7 +106,7 @@ const RAW_CARDS = [
 ];
 
 const counters = {};
-export const CARDS = [...RAW_CARDS, ...CC_RAW_CARDS].map(([doc, section, front, back]) => {
+export const CARDS = RAW_CARDS.map(([doc, section, front, back]) => {
   counters[doc] = (counters[doc] || 0) + 1;
   return { key: `${doc}-${String(counters[doc]).padStart(3, '0')}`, doc, section, front, back };
 });
@@ -140,7 +135,7 @@ const RAW_QUIZ = [
 ];
 
 const qCounters = {};
-export const QUIZ = [...RAW_QUIZ, ...CC_RAW_QUIZ].map(([doc, section, stem, options, answer, why]) => {
+export const QUIZ = RAW_QUIZ.map(([doc, section, stem, options, answer, why]) => {
   qCounters[doc] = (qCounters[doc] || 0) + 1;
   return { key: `Q-${doc}-${String(qCounters[doc]).padStart(3, '0')}`, doc, section, stem, options, answer, why };
 });

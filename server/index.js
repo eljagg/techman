@@ -15,8 +15,6 @@ import { ai, initAi } from './routes/ai.js';
 import { notes } from './routes/notes.js';
 import { nettm } from './routes/nettm.js';
 import { inbox, inboxHook } from './routes/inbox.js';
-import { i18n, langMiddleware } from './i18n.js';
-import { demoGuard } from './demo.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const clientDir = path.join(here, '..', 'client');
@@ -60,24 +58,16 @@ app.use((req, res, next) => {
 });
 
 // Railway health check: no data, no auth.
-// It also checks the database, so Railway restarts an instance that has lost Postgres.
-app.get('/healthz', async (req, res) => {
-  try {
-    await Promise.race([pool.query('SELECT 1'), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 3000))]);
-    res.type('text').send('ok');
-  } catch {
-    res.status(503).type('text').send('database unavailable');
-  }
-});
+app.get('/healthz', (req, res) => res.type('text').send('ok'));
 app.get('/favicon.ico', (req, res) => res.status(204).end());
 // Email Worker webhook: signed with INBOX_SECRET (HMAC), so it does not use Cloudflare Access.
 app.use('/hook/inbox', inboxHook);
 
 // Layer 1: every other request must carry a valid Cloudflare Access token.
 app.use(cfAccess());
-const jsonSmall = express.json({ limit: '100kb' }), jsonLarge = express.json({ limit: '4mb' });
-app.use((req, res, next) => (req.path === '/api/inbox/import' || req.path === '/api/i18n/translate' ? jsonLarge : jsonSmall)(req, res, next));
-app.use(langMiddleware);
+const jsonSmall = express.json({ limit: '100kb' }), jsonLarge = express.json({ limit: '20mb' });
+const LARGE = new Set(['/api/inbox/import', '/api/ai/issue', '/api/ai/ask']);
+app.use((req, res, next) => (LARGE.has(req.path) ? jsonLarge : jsonSmall)(req, res, next));
 app.use(csrfGuard());
 
 // Public within Access: login page and its assets.
@@ -94,7 +84,6 @@ app.post('/api/login', loginHandler);
 
 // Layer 2: everything below needs a signed-in session.
 app.use(requireSession());
-app.use(demoGuard());
 app.use((req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
 app.post('/api/logout', logoutHandler);
 app.post('/api/logout-all', logoutEverywhere);
@@ -104,7 +93,6 @@ app.use('/api/ai', ai);
 app.use('/api/notes', notes);
 app.use('/api/inbox', inbox);
 app.use('/api/nettm', nettm);
-app.use('/api/i18n', i18n);
 app.use('/api', study);
 app.use('/app', express.static(path.join(clientDir, 'app'), { index: false, maxAge: '30d', immutable: true }));
 app.get('/', (req, res) => res.type('html').send(APP_HTML));

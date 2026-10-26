@@ -10,6 +10,7 @@ import { config } from '../config.js';
 import { encryptDocument, decryptDocument } from '../crypto.js';
 import { aiEnabled } from '../ai/claude.js';
 import { triageText, buildIssuePlan } from './ai.js';
+import { parseShots, readShots, MAX_SHOTS } from '../ai/shots.js';
 
 const str = (v, max) => String(v ?? '').replace(/[\u0000-\u0008\u000b-\u001f]/g, ' ').trim().slice(0, max);
 const enc = (id, obj) => encryptDocument(config.fileMasterKey, Buffer.from(JSON.stringify(obj)), id);
@@ -32,16 +33,17 @@ async function getItem(id) {
 async function process(id) {
   const it = await getItem(id); if (!it) return;
   const d = it.data;
-  delete d.error; delete d.plan; // a re-read starts clean
+  delete d.error; delete d.plan; delete d.shotReading; // a re-read starts clean
   try {
     if (!aiEnabled()) { await saveItem(id, it.row.source, d, 'new'); return; }
-    d.triage = await triageText({ from: d.from, subject: d.subject, text: d.text });
+    if (d.shots?.length && !d.shotReading) d.shotReading = (await readShots(d.shots, `${d.subject}\n${String(d.text).slice(0, 1500)}`)).text;
+    d.triage = await triageText({ from: d.from, subject: d.subject, text: d.shotReading ? `${d.text}\n\nATTACHED SCREENSHOTS (read by the AI):\n${d.shotReading}` : d.text });
     const status = d.triage.is_issue ? 'new' : 'not-an-issue';
     await saveItem(id, it.row.source, d, status, d.triage.site, d.triage.priority);
     const { rows: [auto] } = await q(`SELECT value FROM app_state WHERE key = 'inbox_autoplan'`);
     if (d.triage.is_issue && auto?.value === 'on') {
       try {
-        d.plan = await buildIssuePlan({ symptom: d.triage.symptom, site: d.triage.site, when: d.triage.when, tried: d.triage.tried }, 'inbox');
+        d.plan = await buildIssuePlan({ symptom: d.triage.symptom, site: d.triage.site, when: d.triage.when, tried: d.triage.tried, shotReading: d.shotReading || '' }, 'inbox');
         await saveItem(id, it.row.source, d, 'planned', d.triage.site, d.triage.priority);
       } catch (e) {
         // The triage is still useful: keep the item as "new" and say why there is no plan yet.
@@ -57,9 +59,11 @@ async function process(id) {
   }
 }
 
-async function ingest(source, { from, subject, text, receivedFor }, ip) {
+async function ingest(source, { from, subject, text, receivedFor, shots = [] }, ip) {
   const id = crypto.randomUUID();
-  await saveItem(id, source, { from: str(from, 200), subject: str(subject, 300), text: str(text, 30000), to: str(receivedFor, 200) }, 'triaging');
+  let ok = [];
+  try { ok = parseShots(shots.slice(0, MAX_SHOTS)); } catch { ok = []; }
+  await saveItem(id, source, { from: str(from, 200), subject: str(subject, 300), text: str(text, 30000), to: str(receivedFor, 200), shots: ok }, 'triaging');
   await audit('inbox_received', `${source}: ${str(subject, 100)}`, ip);
   process(id).catch(() => {});
   return id;
@@ -69,7 +73,11 @@ async function parseRaw(raw) {
   const m = await PostalMime.parse(raw);
   let text = m.text || '';
   if (!text && m.html) text = m.html.replace(/<style[\s\S]*?<\/style>|<script[\s\S]*?<\/script>/gi, ' ').replace(/<br\s*\/?>|<\/p>|<\/div>|<\/tr>/gi, '\n').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
-  return { from: m.from?.address || '', fromName: m.from?.name || '', subject: m.subject || '', text: text.replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim() };
+  const shots = (m.attachments || [])
+    .filter((a) => /^image\/(png|jpe?g|webp|gif)$/i.test(a.mimeType || '') && a.content && a.content.byteLength >= 15000 && a.content.byteLength <= 3.5 * 1024 * 1024)
+    .slice(0, MAX_SHOTS)
+    .map((a) => ({ data: Buffer.from(a.content).toString('base64'), name: a.filename || 'screenshot' }));
+  return { from: m.from?.address || '', fromName: m.from?.name || '', subject: m.subject || '', text: text.replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim(), shots };
 }
 
 // ---------- public webhook for the Cloudflare Email Worker (mounted before Cloudflare Access) ----------
@@ -90,7 +98,7 @@ inboxHook.post('/email', express.json({ limit: '4mb' }), async (req, res) => {
       await audit('inbox_rejected_sender', fromL, req.clientIp);
       return res.status(202).json({ ok: true });
     }
-    const id = await ingest('email', { from: mail.fromName ? `${mail.fromName} <${mail.from}>` : mail.from, subject: mail.subject, text: mail.text, receivedFor: req.body?.to }, req.clientIp);
+    const id = await ingest('email', { from: mail.fromName ? `${mail.fromName} <${mail.from}>` : mail.from, subject: mail.subject, text: mail.text, receivedFor: req.body?.to, shots: mail.shots }, req.clientIp);
     res.status(202).json({ ok: true, id });
   } catch (e) { console.error('Inbox webhook failed:', e.message); res.status(400).json({ error: 'Could not read the message.' }); }
 });
@@ -106,7 +114,8 @@ inbox.get('/', async (req, res, next) => {
       autoplan: auto?.value === 'on', webhook: Boolean(config.inbox.secret),
       items: rows.map((r) => { let d = {}; try { d = dec(r); } catch { d = { subject: '(could not decrypt)' }; }
         return { id: r.id, received_at: r.received_at, source: r.source, status: r.status, site: r.site, priority: r.priority,
-          from: d.from, subject: d.subject, text: d.text, triage: d.triage || null, plan: d.plan || null, error: d.error || null }; }),
+          from: d.from, subject: d.subject, text: d.text, triage: d.triage || null, plan: d.plan || null, error: d.error || null,
+          shotCount: (d.shots || []).length, shotReading: d.shotReading || '' }; }),
     });
   } catch (e) { next(e); }
 });
@@ -118,10 +127,22 @@ inbox.post('/import', async (req, res, next) => {
   try {
     let mail;
     if (typeof req.body?.eml === 'string' && req.body.eml) mail = await parseRaw(Buffer.from(req.body.eml, 'base64'));
-    else mail = { from: str(req.body?.from, 200), subject: str(req.body?.subject, 300) || 'Pasted message', text: str(req.body?.text, 30000) };
-    if (!mail.text) return res.status(400).json({ error: 'Paste the message text or choose an .eml file.' });
+    else mail = { from: str(req.body?.from, 200), subject: str(req.body?.subject, 300) || 'Pasted message', text: str(req.body?.text, 30000), shots: req.body?.shots || [] };
+    if (Array.isArray(req.body?.shots) && req.body.shots.length) {
+      try { parseShots(req.body.shots); } catch (e) { return res.status(400).json({ error: e.message }); }
+      if (!mail.text) mail.text = '(screenshots only)';
+    }
+    if (!mail.text) return res.status(400).json({ error: 'Paste the message text, add a screenshot, or choose an .eml file.' });
     const id = await ingest('pasted', mail, req.clientIp);
     res.json({ ok: true, id });
+  } catch (e) { next(e); }
+});
+inbox.get('/:id/shots', async (req, res, next) => {
+  try {
+    if (!/^[0-9a-f-]{36}$/.test(req.params.id)) return res.status(400).json({ error: 'Invalid.' });
+    const it = await getItem(req.params.id);
+    if (!it) return res.status(404).json({ error: 'Not found.' });
+    res.json({ shots: (it.data.shots || []).map((x) => ({ media_type: x.media_type, data: x.data, name: x.name })) });
   } catch (e) { next(e); }
 });
 inbox.post('/:id/status', async (req, res, next) => {

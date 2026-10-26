@@ -32,7 +32,6 @@ export function cfAccess() {
     if (config.cf.disabled) {
       req.clientIp = req.ip;
       req.cfEmail = 'local-dev';
-      req.cfOwner = true;
       return next();
     }
     const token = req.headers['cf-access-jwt-assertion'] || readCookie(req, 'CF_Authorization');
@@ -43,14 +42,10 @@ export function cfAccess() {
         audience: config.cf.aud,
       });
       const email = String(payload.email || '').toLowerCase();
-      const isOwner = !config.cf.allowedEmail || email === config.cf.allowedEmail;
-      const isDemo = config.demo.passwordHash && config.demo.emails.includes(email);
-      if (!isOwner && !isDemo) {
+      if (config.cf.allowedEmail && email !== config.cf.allowedEmail) {
         return res.status(403).type('html').send(DENIED);
       }
       req.cfEmail = email;
-      // Demo viewers may only ever get a demo session (see auth.js).
-      req.cfOwner = isOwner;
       // Behind Cloudflare, the visitor's address is in CF-Connecting-IP.
       req.clientIp = req.headers['cf-connecting-ip'] || req.ip;
       return next();

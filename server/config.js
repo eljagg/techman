@@ -53,9 +53,8 @@ export const config = {
     model: (env.AI_MODEL || 'claude-sonnet-5-5').trim(),
     baseUrl: (env.AI_BASE_URL || 'https://api.anthropic.com').trim().replace(/\/$/, ''),
     dailyLimit: Number(env.AI_DAILY_LIMIT || 150),
+    perMinute: Number(env.AI_PER_MINUTE || 20),
     triageModel: (env.AI_TRIAGE_MODEL || 'claude-haiku-5-5').trim(),
-    translateModel: (env.AI_TRANSLATE_MODEL || env.AI_TRIAGE_MODEL || 'claude-haiku-5-5').trim(),
-    translateDailyLimit: Number(env.TRANSLATE_DAILY_LIMIT || 600),
   },
   nettm: { url: process.env.NETTM_URL || '', secret: process.env.NETTM_SECRET || '', cfId: process.env.NETTM_CF_CLIENT_ID || '', cfSecret: process.env.NETTM_CF_CLIENT_SECRET || '' },
   inbox: {
@@ -63,13 +62,6 @@ export const config = {
     allowedFrom: (env.INBOX_ALLOWED_FROM || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
   },
   timeZone: env.APP_TIME_ZONE || 'America/Jamaica',
-  // Optional demo sign-in (read-only, no authenticator code). Off unless DEMO_PASSWORD_HASH is set.
-  demo: {
-    passwordHash: (env.DEMO_PASSWORD_HASH || '').trim(),
-    emails: (env.DEMO_EMAILS || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean),
-    hours: Number(env.DEMO_SESSION_HOURS || 4),
-    aiDailyLimit: Number(env.DEMO_AI_DAILY_LIMIT || 40),
-  },
 };
 
 if (!config.cf.disabled && (!config.cf.teamDomain || !config.cf.aud)) {

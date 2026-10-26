@@ -1,9 +1,8 @@
 // Every source document the portal knows about. Codes are used by figures (Visuals)
-// and the glossary. T, C, E and CC are also the card/quiz decks (see DOC_NAMES).
+// and the glossary. T, C and E are also the card/quiz decks (see DOC_NAMES).
 
 export const SOURCE_GROUPS = [
   { name: 'Support process (GLPI and escalation)', codes: ['T', 'C', 'E'] },
-  { name: 'Customer Care (InvGate)', codes: ['CC', 'CU', 'CP'] },
   { name: 'JCF site documents', codes: ['RSG', 'SSP', 'AVR'] },
   { name: 'MBIS administrator training', codes: ['A0A', 'A0B', 'A0C', 'A0D', 'A1A', 'A1D', 'A2A', 'A3A', 'A3D', 'A4A', 'A5A', 'A5B', 'A5D', 'A6A', 'A6C', 'A6D', 'A7B', 'A7C', 'A7D', 'A8D', 'A9A', 'A9B', 'A9C'] },
   { name: 'Face Expert training', codes: ['F8A', 'F8B'] },
@@ -14,9 +13,6 @@ export const SOURCES = {
   T: 'GLPI User Manual – Technical Support (OPS-I&S-MAN-001)',
   C: 'GLPI User Manual – Clients (OPS-SOP-MAN-002)',
   E: 'Incident Management and Case Escalation Procedures',
-  CC: 'Customer Care User Manual – Technical Support (OPS-IS-MAN-003)',
-  CU: 'Customer Care User Manual – Clients (OPS-IT-MAN-APP-001)',
-  CP: 'Customer Care Password Reset (OPS-IT-MAN-V1)',
   RSG: 'JCF Remote Sites Installation Guide v2.14',
   SSP: 'JCF Start/Stop Procedure',
   AVR: 'JCF Augmented Vision (AV) Design Document',

@@ -443,8 +443,8 @@ export const LESSONS = {
     ],
   },
 
-  13: {
-    intro: 'Put it all together on a real case from the escalation procedures: the day the JCF remote sites went down. Walk it step by step in GLPI, then again in Customer Care, then do it yourself without the manuals.',
+  10: {
+    intro: 'Put it all together on a real case from the escalation procedures: the day the JCF remote sites went down. Walk it step by step, then do it yourself without the manuals.',
     steps: [
       { title: 'The alarm', figs: ['RSG-p037-1'],
         do: ['Remote sites cannot send dossiers to central. CIB, a very important site for the client, is affected.', 'Picture the path: station → site Fortigate 60F → JCF WAN → central Fortigate 101F → MBIS.'],
@@ -483,26 +483,11 @@ export const LESSONS = {
       { title: 'Close it properly', figs: ['T-p020-3', 'T-p052-1'],
         do: ['Change the category to the root cause (communications), not the first guess.', 'Solution: a client-readable summary, with no passwords or internal procedures.', 'Save it to the knowledge base: "Remote sites down: OSPF conflict on tunnels".'],
         why: 'The next engineer, maybe you, fixes it in minutes.' },
-      { title: 'The same incident in Customer Care', figs: ['CC-p010-1', 'CC-p015-3', 'CC-p016-1', 'CU-p010-1'], diagram: { type: 'flow', title: 'Same case, new platform', nodes: [
-          { t: 'Asignar a mí', s: 'Take it from "Mi trabajo"', tone: 'blue' },
-          { t: 'Critical', s: 'Check the priority: the sites are down', tone: 'red' },
-          { t: 'Document', s: 'Diagnosis, checks, evidence; "Interno" for Tech notes', tone: 'green' },
-          { t: 'Waiting', s: 'Client network team overnight → Waiting for the client', tone: 'amber' },
-          { t: 'Solve', s: 'Root-cause category, then "Responder y solucionar"', tone: 'purple' },
-          { t: 'Client', s: 'Accepts → Closed', tone: 'grey' }] },
-        do: ['Run the JCF case again as if it were logged in Customer Care.', 'Critical events also follow CRITICAL INCIDENT MANAGEMENT (OPS-SOP-PRO-006).', 'If a supplier is involved, use "Esperando entidad externa" and record their ticket number.'],
-        why: 'The principles are the same; the screens, statuses and numbers are different. Practise both until the differences feel natural.' },
     ],
     check: [
       { q: 'Without notes: list the steps from alarm to closed case.', a: 'Case exists → take ownership and classify → collect communications evidence → record tasks with time → approval before any remote access → escalate complete → Pending while waiting on the client → confirm restoration and root cause → recategorise, write the solution, save to the knowledge base.' },
       { q: 'Why Pending overnight and not Processing?', a: 'The delay was the client\'s (their network team was not available), so Pending stops the SLA counting against us.' },
       { q: 'What was the root cause, and which category does the case end in?', a: 'An OSPF conflict broke the tunnels, so the case ends in the communications category, matching the root cause.' },
-      { q: 'In Customer Care, which status does the case sit in overnight while the client\'s network team is unavailable?', a: 'Waiting for the client ("Esperando al cliente"), which pauses the SLA because the next action is theirs.' },
     ],
   },
 };
-
-// Customer Care (InvGate) lessons 10–12, plus a short Customer Care step in lessons 1, 2 and 5.
-import { CC_LESSONS, CC_LESSON_STEPS } from './customercare.js';
-Object.assign(LESSONS, CC_LESSONS);
-for (const [n, step] of Object.entries(CC_LESSON_STEPS)) if (LESSONS[n]) LESSONS[n].steps.push(step);

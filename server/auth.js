@@ -32,7 +32,7 @@ async function loadSession(req) {
   const token = readCookie(req, COOKIE);
   if (!token || token.length > 100) return null;
   const { rows } = await q(
-    `SELECT token_hash, expires_at, last_seen_at, role FROM sessions
+    `SELECT token_hash, expires_at, last_seen_at FROM sessions
      WHERE token_hash = $1 AND expires_at > now()
        AND last_seen_at > now() - ($2 || ' minutes')::interval`,
     [hashToken(token), String(config.idleMinutes)]
@@ -50,8 +50,7 @@ export function requireSession() {
   return async (req, res, next) => {
     try {
       const s = await loadSession(req);
-      // An owner session only works for the owner's Cloudflare Access identity.
-      if (s && (s.role === 'demo' || req.cfOwner)) { req.session = s; req.role = s.role; return next(); }
+      if (s) { req.session = s; return next(); }
       if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'Your session has ended. Sign in again.' });
       return res.redirect(302, '/login');
     } catch (e) { next(e); }
@@ -94,31 +93,6 @@ export async function loginHandler(req, res, next) {
     }
 
     const { password, code } = req.body || {};
-
-    // Demo sign-in: password only, read-only role, shorter session. Used when the demo is
-    // switched on and either no authenticator code was typed or the visitor is a demo email.
-    if (config.demo.passwordHash && (!req.cfOwner || !String(code || '').trim())) {
-      let demoOk = false;
-      try { demoOk = typeof password === 'string' && password.length <= 256 && verifyPassword(password, config.demo.passwordHash); } catch { demoOk = false; }
-      if (!demoOk) {
-        await q(`INSERT INTO login_attempts (ip, success) VALUES ($1, false)`, [ip]);
-        await audit('login_failed', 'demo', ip);
-        await new Promise((r) => setTimeout(r, 400 + Math.random() * 400));
-        return res.status(401).json({ error: 'Password or code is incorrect.' });
-      }
-      await q(`INSERT INTO login_attempts (ip, success) VALUES ($1, true)`, [ip]);
-      const token = randomToken(32);
-      const maxAge = Math.round(config.demo.hours * 3600);
-      await q(
-        `INSERT INTO sessions (token_hash, expires_at, ip, user_agent, role)
-         VALUES ($1, now() + ($2 || ' seconds')::interval, $3, $4, 'demo')`,
-        [hashToken(token), String(maxAge), ip, String(req.get('User-Agent') || '').slice(0, 200)]
-      );
-      setCookie(res, token, maxAge);
-      await audit('login_demo', req.cfEmail || null, ip);
-      return res.json({ ok: true, role: 'demo' });
-    }
-    if (!req.cfOwner) return res.status(401).json({ error: 'Password or code is incorrect.' });
     // Both checks always run so timing does not reveal which one failed.
     let pwOk = false;
     try { pwOk = typeof password === 'string' && password.length <= 256 && verifyPassword(password, config.passwordHash); } catch { pwOk = false; }
